@@ -1,12 +1,5 @@
 ---
-AIGC:
-    Label: "1"
-    ContentProducer: 001191440300708461136T1XGW3
-    ProduceID: 297ab8dbc8f4cde8dd6b234597dbc01a_cd9a51aecf5211f19f8752540064ee0f
-    ReservedCode1: aZjE3Ar2tgK7SkZEPSiRzFIljOPlYq8bRDthWMiLZqN+BI5NUaAdfd/NY11V/9Ep9WjI2ha6PMtCX9xm5hA9sFvf2N+Qel4Mp4kPnCaEiajdOWDyqSzRSyTcGRd40t0h+y2u3PAU1kxPmNJYb/Mee5ihkKv0q+O2zrF+x0StXV7++kbvXc2eHkQ9LlY=
-    ContentPropagator: 001191440300708461136T1XGW3
-    PropagateID: 297ab8dbc8f4cde8dd6b234597dbc01a_cd9a51aecf5211f19f8752540064ee0f
-    ReservedCode2: aZjE3Ar2tgK7SkZEPSiRzFIljOPlYq8bRDthWMiLZqN+BI5NUaAdfd/NY11V/9Ep9WjI2ha6PMtCX9xm5hA9sFvf2N+Qel4Mp4kPnCaEiajdOWDyqSzRSyTcGRd40t0h+y2u3PAU1kxPmNJYb/Mee5ihkKv0q+O2zrF+x0StXV7++kbvXc2eHkQ9LlY=
+为ai而生的哔哩哔哩
 ---
 
 # bili-ai
@@ -51,14 +44,6 @@ python main.py serve      # → http://127.0.0.1:8770
 | `bili/web.py` | FastAPI 后台 + SSE + 图床代理 + 扫码登录接口 |
 | `static/index.html` | 单文件前端，零资源依赖 |
 
-## 安装
-
-项目全在 D 盘，依赖装进 Python 的 site-packages（C 盘，仅库本体，不装软件）：
-
-```powershell
-cd D:\projects\bili-ai
-pip install -r requirements.txt     # mcp / fastapi / uvicorn / httpx
-```
 
 ## 运行
 
