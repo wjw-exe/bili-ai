@@ -226,4 +226,4 @@ actions: [play] [pause] [seek +/-sec] [comments --page] [subtitles] [upload --fi
 - ❌ `upload_video(confirm=True)` 当探测手段连发
 - ❌ 用 `like` / `coin` 测连通性
 - ❌ 把 `play` 当成能放画面
-*（内容由AI生成，仅供参考）*
+
