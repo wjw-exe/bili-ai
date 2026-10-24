@@ -14,6 +14,15 @@ AIGC:
 B 站客户端的 **headless 内核 + 双前端**：AI 走 MCP/命令操控，人看可视化后台。
 无窗口、无 Electron、无 Rust，Python 标准库为主。
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
+
+```bash
+git clone https://github.com/wjw-exe/bili-ai.git && cd bili-ai
+pip install -r requirements.txt
+python main.py serve      # → http://127.0.0.1:8770
+```
+
 ```
         ┌─────────────── MCP / CLI / HTTP 命令 ───────────────┐
         │                                                     ▼
