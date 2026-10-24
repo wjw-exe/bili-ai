@@ -1,4 +1,15 @@
 ---
+AIGC:
+    Label: "1"
+    ContentProducer: 001191440300708461136T1XGW3
+    ProduceID: 297ab8dbc8f4cde8dd6b234597dbc01a_3fb4c364cf8011f19f8752540064ee0f
+    ReservedCode1: oechxrfWUmh5oUZDI79c9ej2qh/VqYNeSGluuLvaUdDQMyQDxUCWREzdoTxV/aY5OcgeRQyxr3jlRPlPmguW2zSWK9kqOdYcUEuajwD38WRYU5v818Ybz4r/xspl811du5A/Ylk4RHEQS7OobD+jlqQCtzoVJF8QOnr4vM5aXR5E9CfjxeHJrVgTU1s=
+    ContentPropagator: 001191440300708461136T1XGW3
+    PropagateID: 297ab8dbc8f4cde8dd6b234597dbc01a_3fb4c364cf8011f19f8752540064ee0f
+    ReservedCode2: oechxrfWUmh5oUZDI79c9ej2qh/VqYNeSGluuLvaUdDQMyQDxUCWREzdoTxV/aY5OcgeRQyxr3jlRPlPmguW2zSWK9kqOdYcUEuajwD38WRYU5v818Ybz4r/xspl811du5A/Ylk4RHEQS7OobD+jlqQCtzoVJF8QOnr4vM5aXR5E9CfjxeHJrVgTU1s=
+---
+
+---
 为 ai 而生的哔哩哔哩
 ---
 
@@ -16,10 +27,17 @@ B 站客户端的 **headless 内核 + 双前端**：AI 走 MCP / CLI / HTTP 操�
 ![No API Key](https://img.shields.io/badge/API%20Key-not%20required-success)
 
 ```bash
-git clone https://github.com/wjw-exe/bili-ai.git && cd bili-ai
-pip install -r requirements.txt
-python main.py serve      # → http://127.0.0.1:8770
+git clone https://github.com/wjw-exe/bili-ai.git
+cd bili-ai                       # 必须在项目根目录运行，bili 是包
+python -m venv .venv
+.venv\Scripts\activate           # PowerShell: .\.venv\Scripts\Activate.ps1
+python -m pip install -U pip
+python -m pip install -r requirements.txt
+python main.py serve             # → http://127.0.0.1:8770
 ```
+
+装完先跑一次 `python main.py selftest` 验证链路，再开后台。装不上/起不来的对号入座见
+[安装](#安装) 与 [启动不起来？](#启动不起来)。
 
 ```
         ┌──────────── MCP（23 工具） / CLI / HTTP ────────────┐
@@ -83,7 +101,46 @@ bili-ai 的三条设计原则：
 | `bili/web.py` | FastAPI 后台 + SSE + 图床代理 + 扫码登录 + 收件箱 / 巡览接口 |
 | `static/index.html` | 单文件前端，零资源依赖 |
 
+## 环境要求
+
+| 项 | 要求 | 说明 |
+|---|---|---|
+| Python | **3.10+**（实测 3.11） | 代码用了 `X \| None` 与内置泛型注解，3.9 及以下会报 TypeError |
+| mcp | **1.2 ≤ 版本 < 3** | 1.x 服务端类叫 `FastMCP`，2.x 改名 `MCPServer`，本项目两者都兼容；区间外直接 ImportError |
+| fastapi / uvicorn | 已列入 requirements | 只有 `serve`、以及 `mcp` 附带的浏览器后台需要；`mcp --no-web` 纯 stdio 也仍会 import |
+| Node / Rust / Electron | 不需要 | 前端是单文件 `static/index.html`，零构建 |
+| 网络 | 能访问 bilibili.com | 首次运行会暖机拿 Cookie，跨境网络可能触发风控 `v_voucher` |
+
+## 安装
+
+```powershell
+cd D:\projects\bili-ai          # 你的项目目录，必须是 main.py 所在层
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1    # cmd 用 .venv\Scripts\activate.bat；Git Bash 用 source .venv/Scripts/activate
+python -m pip install -U pip
+python -m pip install -r requirements.txt
+```
+
+四条硬性注意：
+
+1. **必须在项目根目录执行**。`bili/` 是包，`main.py` 用相对导入；在别的目录 `python D:\projects\bili-ai\main.py` 会 `ModuleNotFoundError: No module named 'bili'`。
+2. **用 `python -m pip`，不要裸 `pip`**。机器上常有多套 Python，裸 `pip` 可能装到另一个解释器，启动时照样报缺包。
+3. **mcp 版本按区间装**。`requirements.txt` 已写 `mcp>=1.2,<3`；若你曾手动 `pip install mcp` 装到旧版或未来的大版本，先 `python -m pip install -U "mcp>=1.2,<3"`。
+4. **升级依赖别整套 overwrite**。已经有环境时只 `python -m pip install -r requirements.txt`，不要 `pip freeze > requirements.txt` 反向覆盖。
+
+安装完成的判定（三条都应通过）：
+
+```powershell
+python -V                                            # 3.10 以上
+python -c "import fastapi, uvicorn, httpx, segno"     # 无输出即通过
+python -c "import bili.mcp_server as m; print(m.SERVER_API)"   # 打印 fastmcp (mcp 1.x) 或 mcpserver (mcp 2.x)
+```
+
+最后一条能打出 `SERVER_API`，说明 MCP 层和当前 mcp 版本对上了——这是"按 README 装完却起不来"最常见的一环。
+
 ## 运行
+
+所有命令都在项目根目录执行。
 
 ```powershell
 python main.py serve                # 人看的后台 http://127.0.0.1:8770
@@ -95,6 +152,30 @@ python main.py cli open_video BV1GJ411x7h7
 python main.py cli inbox --kind reply
 python main.py selftest             # 联网全链路自检
 ```
+
+### 启动不起来？
+
+按现象对号入座，前三条覆盖了绝大多数情况：
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| `ModuleNotFoundError: No module named 'bili'` | 当前目录不是项目根目录，或 IDE 里直接运行了 `bili/` 下的文件 | `cd` 到 `main.py` 所在目录再执行；IDE 的运行配置把 `Working directory` 指向项目根 |
+| `ModuleNotFoundError: No module named 'fastapi'`（或 `uvicorn` / `httpx` / `segno`） | 依赖装进了另一套 Python，或 venv 没激活 | 激活 venv 后 `python -m pip install -r requirements.txt`；用 `python -V` 和 `python -m pip -V` 确认两者路径一致 |
+| `ImportError: 未找到 MCP 服务端类：需要 mcp>=1.2` | mcp 版本低于 1.2 或 ≥3，1.x / 2.x 类名都对不上 | `python -m pip install -U "mcp>=1.2,<3"` |
+| `AttributeError` / `TypeError: run() got an unexpected keyword argument 'transport'` | mcp 版本与启动签名不匹配 | 同上拉开到 1.2~2.x；本项目 `run()` 已按 `transport=` 与位置参数两种写法自适应 |
+| `OSError: [Errno 10048] error while attempting to bind 127.0.0.1:8770` | 8770 被占（上一次进程没退干净） | `python main.py serve --port 8772`；或先 `Get-NetTCPConnection -LocalPort 8770` 找到进程结束 |
+| `UnicodeEncodeError: 'gbk' codec can't encode` | Windows 控制台默认 GBK | `chcp 65001`，或 `$env:PYTHONUTF8=1` 后重开 |
+| `python : 无法将“python”项识别为` | Python 未装或没进 PATH | 装 3.10+ 并勾选 Add to PATH；或用 `py -3 main.py serve` |
+| 后台能打开但一片空白 / 接口 500 | 前端在 `static/index.html`，缺文件或 `cwd` 不对 | 确认从项目根启动；`python main.py selftest` 看具体断点 |
+
+启动成功的样子：
+
+```
+INFO:     Uvicorn running on http://127.0.0.1:8770 (Press CTRL+C to quit)
+```
+
+浏览器打开 `http://127.0.0.1:8770` 能看到三栏后台（Now Playing / 搜索·评论·字幕 / Command Log）即正常。
+MCP 侧另测一条：`python main.py mcp --no-web` 后由客户端 `initialize` + `tools/list` 应返回 23 个工具。
 
 ### 接到 MCP 客户端
 
@@ -113,6 +194,9 @@ python main.py selftest             # 联网全链路自检
 此时后台会自动起在 8770。后台拥有自己的 `Core` 实例（避免跨线程操作主 loop 的连接池），
 **按钮可点、可扫码登录**；两边共用同一个 `StateStore`，所以 AI 的每一步与人的每次点击
 都会实时反映到同一份快照上。`mcp --no-web` 时不起后台，纯 stdio 工具服务。
+
+> 用 venv 装的依赖，`command` 要写 venv 里的解释器绝对路径，否则客户端会用系统 Python 启动而报缺包：
+> `"command": "D:\\projects\\bili-ai\\.venv\\Scripts\\python.exe"`。`cwd` 必须保留，`bili` 是包。
 
 ### 三个 AI 闭环
 
@@ -369,7 +453,9 @@ state，任一环节风控或报文异常会打印错误码。写操作守卫用
 | v0.1.x | 搜索 / 详情 / 逻辑播放 / 评论 / 点赞投币收藏 |
 | v0.2.0 | CC / AI 字幕读取与导出 |
 | v0.3.0 | 消息收件箱（回复我 / @我）、AI 代写回复、AI 巡览；后台改浅色中性主题 |
+| v0.3.1 | 修正安装说明：新增环境要求 / 安装判定 / 启动排错；`requirements.txt` 锁定 `mcp>=1.2,<3`；MCP 层兼容 mcp 1.x `FastMCP` 与 2.x `MCPServer` 两种类名及 `run()` 签名 |
 
 ## License
 
 [MIT](LICENSE)
+*（内容由AI生成，仅供参考）*

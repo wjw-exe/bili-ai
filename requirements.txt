@@ -1,5 +1,14 @@
-mcp
-fastapi
-uvicorn
-httpx
-segno
+# Python 3.10+
+# mcp 必须落在 1.2 ~ 2.x：1.x 的服务端类叫 FastMCP，2.x 改名为 MCPServer。
+# bili/mcp_server.py 对两者都能导入，但区间外的版本可能对不上，故锁定范围。
+mcp>=1.2,<3
+
+# 后台（python main.py serve，以及 mcp 模式附带的可视化线程）
+fastapi>=0.100
+uvicorn>=0.20
+
+# HTTP 客户端（wbi 签名请求、字幕拉取、封面代理）
+httpx>=0.24
+
+# 终端二维码渲染（python main.py login）
+segno>=1.5

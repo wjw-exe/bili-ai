@@ -2,14 +2,35 @@
 
 设计约束：每个工具只返回紧凑纯文本（一行一条、短键、稳定 bvid），
 不返回 JSON，避免模型把 token 花在括号和字段名上。
+
+版本兼容：官方 Python SDK 换过一次服务端类名——
+  mcp 1.x：``from mcp.server.fastmcp import FastMCP``
+  mcp 2.x：``from mcp.server.mcpserver import MCPServer``（FastMCP 改名 MCPServer）
+两者工具注册语法一致（``@server.tool()`` + 类型注解 + docstring），故按可用性择优导入，
+不把用户钉死在某一个大版本上。
 """
 
-from mcp.server.mcpserver import MCPServer
+try:                                        # mcp 1.2 ~ 1.x
+    from mcp.server.fastmcp import FastMCP as _Server
+    SERVER_API = "fastmcp (mcp 1.x)"
+except Exception:                           # mcp 2.x：FastMCP 更名为 MCPServer
+    try:
+        from mcp.server.mcpserver import MCPServer as _Server
+        SERVER_API = "mcpserver (mcp 2.x)"
+    except Exception:
+        try:
+            from mcp.server import MCPServer as _Server
+            SERVER_API = "mcpserver (mcp 2.x, top-level)"
+        except Exception as e:              # pragma: no cover
+            raise ImportError(
+                "未找到 MCP 服务端类：需要 mcp>=1.2。"
+                "安装：pip install -U \"mcp>=1.2,<3\"（1.x 走 FastMCP，2.x 走 MCPServer）"
+            ) from e
 
 from .core import core
 from .store import store
 
-mcp = MCPServer(
+mcp = _Server(
     name="bili",
     instructions=(
         "B 站客户端（headless，无窗口）。所有状态由同一个 StateStore 维护，"
@@ -198,4 +219,8 @@ async def roam_status() -> str:
 
 
 def run() -> None:
-    mcp.run("stdio")
+    """stdio 传输启动。1.x / 2.x 的 run 签名不同，按可用形式调用。"""
+    try:
+        mcp.run(transport="stdio")
+    except TypeError:
+        mcp.run("stdio")
