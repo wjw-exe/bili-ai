@@ -42,7 +42,7 @@ def _parse_cli(cmd: str, rest: list[str]) -> dict:
                 v = rest[i + 1]
                 if key == "at":
                     args[key] = float(v)
-                elif key in ("page", "limit"):
+                elif key in ("page", "limit", "offset"):
                     args[key] = int(v)
                 else:
                     args[key] = v
@@ -54,7 +54,8 @@ def _parse_cli(cmd: str, rest: list[str]) -> dict:
         i += 1
     if pos:
         main_key = {"search": "keyword", "open_video": "bvid", "play": "bvid",
-                    "comment": "message"}.get(cmd)
+                    "comment": "message", "subtitles": "bvid",
+                    "subtitle": "bvid"}.get(cmd)
         if main_key and main_key not in args:
             args[main_key] = pos[0]
     return args
@@ -121,7 +122,7 @@ def _auth_cmd(a) -> int:
 async def _selftest() -> int:
     from bili.core import core
 
-    print("[1/4] warmup + search")
+    print("[1/5] warmup + search")
     out = await core.execute("search", {"keyword": "python", "page": 1, "limit": 3})
     print(out)
     lines = [ln for ln in out.splitlines() if ln.startswith("#")]
@@ -130,27 +131,43 @@ async def _selftest() -> int:
         return 1
 
     bvid = lines[0].split()[1]
-    print(f"\n[2/4] open_video {bvid}")
+    print(f"\n[2/5] open_video {bvid}")
     out = await core.execute("open_video", {"bvid": bvid})
     print(out)
 
-    print("\n[3/4] play / seek / pause")
+    print("\n[3/5] play / seek / pause")
     print(await core.execute("play", {"bvid": "", "at": 0.0}))
     await asyncio.sleep(1.2)
     print(await core.execute("seek", {"to": "+15"}))
     print(await core.execute("pause", {}))
 
-    print("\n[4/4] comments + 写操作守卫")
+    print("\n[4/5] comments + 写操作守卫")
     out = await core.execute("comments", {"page": 1, "limit": 3})
     print(out)
     if not any(ln.startswith("#") for ln in out.splitlines()):
         print("FAIL: 评论为空")
         return 1
-    out = await core.execute("like", {"on": True})
+    # 守卫测试用非法 bvid，避免在已登录账号上真的点赞某个视频
+    out = await core.execute("like", {"bvid": "BV1xxINVALID", "on": True})
     print(out)
-    if not (out.startswith("ERR_NEED_LOGIN") or out.startswith("like")):
+    if not (out.startswith("ERR_") or out.startswith("ok like") or "ApiError" in out):
         print("FAIL: 写操作守卫未如期返回")
         return 1
+
+    print("\n[5/5] subtitles（无字幕轨则跳过，不算失败）")
+    out = await core.execute("subtitles", {"bvid": bvid, "page": 1})
+    print(out)
+    if "lan=" in out:
+        lang = next(ln for ln in out.splitlines() if "lan=" in ln)
+        lang = lang.split("lan=")[1].split()[0]
+        out = await core.execute("subtitle", {"bvid": bvid, "lang": lang,
+                                              "offset": 0, "limit": 3})
+        print(out)
+        if not out.startswith("view=subtitle"):
+            print("FAIL: 字幕正文读取失败")
+            return 1
+    else:
+        print("SKIP: 该视频没有字幕轨")
 
     print("\n" + await core.execute("state", {}))
     return 0

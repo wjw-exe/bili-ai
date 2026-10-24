@@ -191,6 +191,21 @@ class Api:
         r.raise_for_status()
         return r.json()
 
+    async def get_raw_json(self, url: str, referer: str) -> dict:
+        """抓「裸 JSON」资源：既没有 code 字段，也绝不能带 params。
+
+        subtitle_url 形如 //aisubtitle.hdslb.com/bfs/ai_subtitle/prod/xxx?auth_key=...
+        auth_key 与完整 query 串绑定；httpx 只要收到 params 参数就会重建 query，
+        实测立刻 403（2026-10 实测：带 params={} 403，不带 200），故此处不传 params。
+        """
+        self.sync_from_disk()
+        r = await self.client.get(url, headers={"Referer": referer})
+        r.raise_for_status()
+        try:
+            return r.json()
+        except ValueError:
+            raise RuntimeError(f"PARSE_ERROR: body={r.text[:120]}")
+
     async def post_json(self, url: str, data: dict, referer: str,
                         csrf: bool = True) -> dict:
         """表单 POST，自动附带 csrf=bili_jct；写操作接口都必须带"""

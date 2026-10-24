@@ -61,6 +61,9 @@ class Store:
         self.comments_meta: dict = {}
         # 当前视频的互动状态；None 表示未登录/未知
         self.inter: dict = {"liked": None, "coins": None, "favoured": None}
+        # 字幕：当前视频的轨道列表与已取回的字幕概况
+        self.subs: dict = {"bvid": "", "lan": "", "lan_doc": "", "tracks": [],
+                           "n": 0, "chars": 0, "saved": ""}
         self.account: dict = {"login": False, "uname": "", "mid": 0, "avatar": ""}
 
     def note(self, cmd: str, ok: bool, summary: str) -> None:
@@ -81,6 +84,7 @@ class Store:
                 "comments": list(self.comments),
                 "comments_meta": dict(self.comments_meta),
                 "inter": dict(self.inter),
+                "subs": dict(self.subs),
                 "account": dict(self.account),
                 "log": list(self.log),
                 "uptime": round(time.time() - self.started_at, 1),

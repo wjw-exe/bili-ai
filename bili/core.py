@@ -53,6 +53,8 @@ class Core:
             store.player.base = 0.0
             store.player.playing = False
             store.comments, store.comments_meta = [], {}
+            store.subs = {"bvid": "", "lan": "", "lan_doc": "", "tracks": [],
+                          "n": 0, "chars": 0, "saved": ""}
             store.inter = {"liked": None, "coins": None, "favoured": None}
         await self._refresh_inter()
         return "\n".join([fmt.detail(d), fmt.inter(store.inter), self._actions()])
@@ -69,6 +71,57 @@ class Core:
                                    "total": r["total"], "source": r["source"],
                                    "is_end": r["is_end"]}
         return fmt.comments(r)
+
+    # ---------------- 字幕 ----------------
+
+    async def cmd_subtitles(self, bvid: str = "", page: int = 1) -> str:
+        cur = await self._target(bvid)
+        if not cur:
+            return "ERR_NO_TARGET: 先 open_video 或传 bvid"
+        r = await self.bili.subtitle_tracks(cur["bvid"], page)
+        with store.lock:
+            store.subs = {"bvid": r["bvid"], "lan": "", "lan_doc": "",
+                          "tracks": [{"lan": t["lan"], "lan_doc": t["lan_doc"],
+                                      "lock": t["lock"]} for t in r["tracks"]],
+                          "n": 0, "chars": 0, "saved": ""}
+        return fmt.subtitle_tracks(r)
+
+    async def cmd_subtitle(self, bvid: str = "", lang: str = "", page: int = 1,
+                           offset: int = 0, limit: int = 200,
+                           export: str = "") -> str:
+        """读字幕正文。offset/limit 按「句」分页（给 AI 逐段读），export 落盘 srt/txt/md。"""
+        cur = await self._target(bvid)
+        if not cur:
+            return "ERR_NO_TARGET: 先 open_video 或传 bvid"
+        r = await self.bili.subtitle_cues(cur["bvid"], lang, page)
+        n = len(r["cues"])
+        chars = sum(len(c["text"]) for c in r["cues"])
+        with store.lock:
+            store.subs = {"bvid": r["bvid"], "lan": r["lan"], "lan_doc": r["lan_doc"],
+                          "tracks": r["tracks"], "n": n, "chars": chars,
+                          "saved": store.subs.get("saved") or ""}
+        head = fmt.subtitle_head(r)
+        if export:
+            kind = str(export).strip().lower()
+            renders = {"srt": fmt.subtitle_srt, "txt": fmt.subtitle_txt,
+                       "md": fmt.subtitle_md}
+            if kind not in renders:
+                return f"ERR_BAD_EXPORT: {export}  可选 srt/txt/md"
+            body = renders[kind](r)
+            path = self._sub_dir() / f'{r["bvid"]}_{r["lan"]}.{kind}'
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(body, encoding="utf-8")
+            with store.lock:
+                store.subs["saved"] = str(path)
+            return (f"{head}\nok subtitle_saved  export={kind}  path={path}\n"
+                    f'hint: 需要正文时用 [subtitle --offset N --limit 200] 分段读取')
+        limit = max(1, min(500, int(limit)))
+        return fmt.subtitle_page(r, max(0, int(offset)), limit)
+
+    @staticmethod
+    def _sub_dir():
+        from pathlib import Path
+        return Path(__file__).resolve().parent.parent / ".data" / "subs"
 
     async def cmd_comment(self, bvid: str = "", message: str = "",
                           root: int | str = 0, parent: int | str = 0) -> str:
@@ -179,6 +232,13 @@ class Core:
             p = snap["player"]
             lines.append(f'player: {"playing" if p["playing"] else "paused"} '
                          f't={p["pos"]}/{p["dur"]} ({fmt.hms(p["pos"])})')
+        subs = snap.get("subs") or {}
+        if subs.get("bvid"):
+            if subs.get("n"):
+                lines.append(f'subs: lan={subs["lan"]} cues={subs["n"]} '
+                             f'chars={subs["chars"]}')
+            else:
+                lines.append(f'subs: tracks={len(subs.get("tracks") or [])} (未取正文)')
         lines.append(self._actions(snap))
         return "\n".join(lines)
 
@@ -255,6 +315,7 @@ class Core:
             return "actions: [open_video bvid] [search keyword --page]"
         if v == "video":
             return ("actions: [play] [pause] [seek +/-sec] [comments --page] "
+                    "[subtitles] [subtitle --lang ai-zh --offset 0 --limit 200] "
                     "[like --on/--off] [coin --n 2 --also-like] [fav --folder 名称] "
                     "[unfav] [folders] [me] [state]")
         return "actions: [search keyword] [open_video bvid]"

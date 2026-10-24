@@ -6,7 +6,7 @@ from urllib.parse import quote, urlencode
 
 from . import sign
 from .fmt import clean
-from .http import WEB, Api, NeedLogin, RiskControl
+from .http import WEB, Api, ApiError, NeedLogin, RiskControl
 
 API = "https://api.bilibili.com"
 
@@ -21,6 +21,7 @@ class Bili:
         self.http = Api()
         self._mixin: str | None = None
         self._mixin_at = 0.0
+        self._subs: dict[tuple, dict] = {}
 
     async def warmup(self) -> None:
         """主站首页拿 buvid3 / b_nut，未登录态必需"""
@@ -91,6 +92,89 @@ class Bili:
             "desc": " ".join((d.get("desc") or "").split())[:200],
             "pic": _abs(d.get("pic") or ""),
         }
+
+    # ---------------- 字幕 ----------------
+
+    async def pages(self, bvid: str) -> list[dict]:
+        """分 P 列表。字幕按 cid 走，多 P 视频必须先定位到具体一 P"""
+        ref = self._video_ref(bvid)
+        v = await self.http.get_json(f"{API}/x/player/pagelist", {"bvid": bvid}, ref)
+        out = []
+        for p in v.get("data") or []:
+            out.append({"page": p.get("page") or 0, "cid": p.get("cid") or 0,
+                        "part": clean(p.get("part") or ""),
+                        "dur": int(p.get("duration") or 0)})
+        return out
+
+    async def subtitle_tracks(self, bvid: str, page: int = 1) -> dict:
+        """列出平台字幕轨（CC 字幕 / AI 字幕）。
+
+        只覆盖 B 站后台的字幕文件；烧进画面的硬字幕没有数据源，无法获取。
+        """
+        ref = self._video_ref(bvid)
+        ps = await self.pages(bvid)
+        if not ps:
+            raise ApiError(-404, "视频不存在或已下架")
+        idx = min(max(1, int(page)), len(ps)) - 1
+        p = ps[idx]
+        params = sign.sign_params({"bvid": bvid, "cid": p["cid"]}, await self.mixin_key())
+        v = await self.http.get_json(f"{API}/x/player/wbi/v2", params, ref)
+        st = (v.get("data") or {}).get("subtitle") or {}
+        tracks = []
+        for s in st.get("subtitles") or []:
+            lan = s.get("lan") or ""
+            tracks.append({
+                "lan": lan,
+                "lan_doc": s.get("lan_doc") or "",
+                "url": _abs(s.get("subtitle_url") or ""),
+                "ai": bool((s.get("ai_type") or 0) > 0 or lan.startswith("ai-")),
+                "lock": bool(s.get("is_lock")),
+            })
+        return {"bvid": bvid, "cid": p["cid"], "page": p["page"], "parts": len(ps),
+                "allow_submit": bool(st.get("allow_submit")), "tracks": tracks}
+
+    def _pick_track(self, tracks: list[dict], lan: str) -> dict:
+        if lan:
+            key = str(lan).strip().lower()
+            hit = (next((t for t in tracks if t["lan"].lower() == key), None)
+                   or next((t for t in tracks
+                            if key in (t["lan"] + " " + t["lan_doc"]).lower()), None))
+            if not hit:
+                names = ", ".join(t["lan"] for t in tracks)
+                raise ApiError(-400, f"没有该语言字幕：{lan}  可选 [{names}]")
+            return hit
+        for want in ("ai-zh", "zh-CN", "zh-Hans", "zh"):
+            hit = next((t for t in tracks if t["lan"] == want), None)
+            if hit:
+                return hit
+        return tracks[0]
+
+    async def subtitle_cues(self, bvid: str, lan: str = "", page: int = 1) -> dict:
+        meta = await self.subtitle_tracks(bvid, page)
+        tracks = meta["tracks"]
+        if not tracks:
+            raise ApiError(-404, "该视频没有字幕轨（若为画面内嵌硬字幕则无法获取）")
+        pick = self._pick_track(tracks, lan)
+        if pick["lock"]:
+            raise ApiError(-403, f'字幕轨 {pick["lan"]} 需购买/充电后解锁')
+        key = (bvid, meta["cid"], pick["lan"])
+        if key in self._subs:
+            return self._subs[key]
+        j = await self.http.get_raw_json(pick["url"], self._video_ref(bvid))
+        cues = []
+        for b in j.get("body") or []:
+            text = " ".join(clean(b.get("content") or "").split())
+            if not text:
+                continue
+            cues.append({"from": round(float(b.get("from") or 0), 2),
+                         "to": round(float(b.get("to") or 0), 2), "text": text})
+        out = {"bvid": bvid, "cid": meta["cid"], "page": meta["page"],
+               "lan": pick["lan"], "lan_doc": pick["lan_doc"], "ai": pick["ai"],
+               "tracks": [{"lan": t["lan"], "lan_doc": t["lan_doc"],
+                           "lock": t["lock"]} for t in tracks],
+               "cues": cues}
+        self._subs[key] = out
+        return out
 
     # ---------------- 登录态 ----------------
 

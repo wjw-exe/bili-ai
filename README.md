@@ -40,7 +40,7 @@ python main.py serve      # → http://127.0.0.1:8770
 | `bili/store.py` | StateStore + 逻辑播放器（时钟推进）+ 评论 / 互动状态 |
 | `bili/fmt.py` | 文本展现层（表格化紧凑输出） |
 | `bili/core.py` | 命令总线，MCP / Web / CLI 共用同一 `execute` |
-| `bili/mcp_server.py` | MCP stdio 层，15 个工具 |
+| `bili/mcp_server.py` | MCP stdio 层，18 个工具 |
 | `bili/web.py` | FastAPI 后台 + SSE + 图床代理 + 扫码登录接口 |
 | `static/index.html` | 单文件前端，零资源依赖 |
 
@@ -91,6 +91,8 @@ python main.py selftest             # 联网全链路自检
 | `fav` | `bvid=""` `folder=""` | 收藏，`folder` 可填 id 或名称，留空收进第一个夹 |
 | `unfav` | `bvid=""` `folder=""` | 取消收藏，留空=从所有夹移除 |
 | `folders` | — | 列收藏夹（id / 名称 / 条目数） |
+| `subtitles` | `bvid=""` `page=1` | 列出字幕轨（lan / 语言 / 是否 AI / 是否需解锁） |
+| `subtitle` | `bvid=""` `lang=""` `offset=0` `limit=200` `export=""` | 读字幕正文（分页），`export=txt/srt/md` 落盘 |
 | `me` | — | 当前登录账号 |
 
 `like` / `coin` / `fav` / `unfav` / `folders` 需要登录态，未登录返回 `ERR_NEED_LOGIN`（提示去后台扫码），不会静默失败。
@@ -105,6 +107,30 @@ next: search --keyword "猫" --page 2
 ```
 
 每条输出末行 `actions:` 告诉 AI 下一步能发什么命令，避免它瞎试。
+
+## 字幕（外部 CC，不含画面内嵌字幕）
+
+B 站的 AI 字幕 / 人工字幕都属于**外挂轨**，可通过 `player/wbi/v2` 拿到 `subtitle_url` 再拉正文；画面里烧死的硬字幕没有对应数据，取不到，本项目也不做 OCR。
+
+```
+subtitles                                  # 列轨：lan=ai-zh 中文 ai=1 lock=0
+subtitle --lang ai-zh --offset 300 --limit 200   # 分页读正文，末行 next: 给下一页
+subtitle --lang ai-zh --export srt         # 导出到 .data/subs/BVxxx_ai-zh.srt
+```
+
+输出是便于 AI 阅读的逐句文本，时间码 `[mm:ss]` 版本便于定位：
+
+```
+view=subtitle  bvid=BV1zNoVB1EWb  lan=ai-zh  中文  ai=1  cues=4709  chars=49592  offset=300 limit=4
+[11:39] 啊就那时候口气很大啊
+[11:41] 这是哪一年时候
+next: subtitle --offset 304 --limit 4
+```
+
+- 字幕正文进程内缓存（同一 bvid+lang 只拉一次），翻页不重复请求。
+- `subtitle_url` 带签名参数，拉取时**不能**再加普通参数，否则 403——`http.get_raw_json` 专为此实现。
+- 后台第三个 Tab「字幕」可视化同一份数据：自动选 `ai-zh`、每页 300 句、可「加载更多」、可导出 txt。
+- 该视频没有字幕轨时返回 `tracks=0` 明确提示，而不是空正文。
 
 ## 登录
 
@@ -167,7 +193,7 @@ python main.py logout   # 删除本地 cookie.json
 
 ## 已知限制
 
-- **已实现接口**：search / view / comments / comment / like / coin / fav / unfav / folders / nav(me)。**未实现**：高码率 playurl（真实取流）、删评论、发弹幕。
+- **已实现接口**：search / view / comments / comment / like / coin / fav / unfav / folders / subtitles / subtitle / nav(me)。**未实现**：高码率 playurl（真实取流）、删评论、发弹幕。
 - **写操作的边界**：点赞、投币、收藏是真实写 B 站账号，调用即产生副作用（投币不可撤回）。MCP 工具描述已标注「需要登录态」，未登录一律 `ERR_NEED_LOGIN` 阻断，不会误写。
 - **时长秒位**：搜索接口对部分视频返回的 `duration` 本身是 `16:0` 这种缺位值，前端原样显示，不补零——补零等于伪造数据。`open_video` 后拿到的 `dur` 是精确秒数。
 - **逻辑播放**：不对接真实播放器，`t` 是客户端时钟推算值，不是解码进度。

@@ -70,3 +70,70 @@ def detail(d: dict) -> str:
         f'fav={cnt(d["fav"])} danmaku={cnt(d["danmaku"])} reply={cnt(d["reply"])}\n'
         f'desc: {d["desc"][:120]}'
     )
+
+
+# ---------------- 字幕 ----------------
+
+def _hms_ms(sec: float) -> str:
+    """SRT 时间戳：00:00:01,240"""
+    ms = int(round(float(sec) * 1000))
+    h, ms = divmod(ms, 3_600_000)
+    m, ms = divmod(ms, 60_000)
+    s, ms = divmod(ms, 1000)
+    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+
+
+def subtitle_tracks(r: dict) -> str:
+    head = (f'view=subtitles  bvid={r["bvid"]}  cid={r["cid"]}  '
+            f'page={r["page"]}/{r["parts"]}  tracks={len(r["tracks"])}')
+    lines = [head]
+    if not r["tracks"]:
+        lines.append("(无字幕轨：该视频没有平台字幕；画面内嵌硬字幕无法获取)")
+        return "\n".join(lines)
+    for i, t in enumerate(r["tracks"], 1):
+        lines.append(f'#{i}  lan={t["lan"]}  {t["lan_doc"]}  '
+                     f'ai={int(t["ai"])}  lock={int(t["lock"])}')
+    first = next((t for t in r["tracks"] if not t["lock"]), r["tracks"][0])
+    lines.append(f'next: subtitle --lang {first["lan"]} --offset 0 --limit 200')
+    return "\n".join(lines)
+
+
+def subtitle_head(r: dict) -> str:
+    return (f'view=subtitle  bvid={r["bvid"]}  lan={r["lan"]}  {r["lan_doc"]}  '
+            f'ai={int(r["ai"])}  cues={len(r["cues"])}  '
+            f'chars={sum(len(c["text"]) for c in r["cues"])}')
+
+
+def subtitle_page(r: dict, offset: int, limit: int) -> str:
+    cues = r["cues"]
+    lo, hi = max(0, offset), min(len(cues), max(0, offset) + max(1, limit))
+    lines = [f"{subtitle_head(r)}  offset={lo} limit={hi - lo}"]
+    for c in cues[lo:hi]:
+        lines.append(f'[{hms(c["from"])}] {c["text"]}')
+    if not cues:
+        lines.append("(字幕内容为空)")
+    elif hi < len(cues):
+        lines.append(f'next: subtitle --offset {hi} --limit {limit}')
+    else:
+        lines.append("(已到末尾)")
+    return "\n".join(lines)
+
+
+def subtitle_srt(r: dict) -> str:
+    out = []
+    for i, c in enumerate(r["cues"], 1):
+        out.append(f'{i}\n{_hms_ms(c["from"])} --> {_hms_ms(c["to"])}\n{c["text"]}\n')
+    return "\n".join(out)
+
+
+def subtitle_txt(r: dict) -> str:
+    """纯文本稿：一行一句，不带时间码，适合直接喂给模型做摘要"""
+    return "\n".join(c["text"] for c in r["cues"])
+
+
+def subtitle_md(r: dict) -> str:
+    """带时间码的 Markdown 稿，适合做章节化摘要"""
+    lines = [f'# {r["bvid"]} 字幕 · {r["lan_doc"]} · {len(r["cues"])} 句', ""]
+    for c in r["cues"]:
+        lines.append(f'- **[{hms(c["from"])}]** {c["text"]}')
+    return "\n".join(lines) + "\n"

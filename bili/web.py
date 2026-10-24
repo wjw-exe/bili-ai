@@ -24,7 +24,8 @@ _BLANK_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYGD4DwABBAEAcCBlCwAAAABJRU5ErkJggg=="
 )
 ALLOWED = {"search", "open_video", "play", "pause", "resume", "seek", "state", "status",
-           "comments", "comment", "like", "coin", "fav", "unfav", "folders", "me"}
+           "comments", "comment", "like", "coin", "fav", "unfav", "folders", "me",
+           "subtitles", "subtitle"}
 
 # 后台专用 Core：独立 Bili 实例（自己的 httpx client，绑定 uvicorn 的事件循环），
 # 与 MCP 主 loop 的 core 互不干扰；两者共用同一个 store，状态互通。

@@ -60,6 +60,21 @@
   .act.on{color:var(--pink);border-color:#5a2a38;background:#221b22}
   .act:disabled{opacity:.45;cursor:not-allowed}
 
+  /* 字幕 */
+  .subbar{display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:1px solid var(--line);
+          font-size:12px;color:var(--dim);flex-wrap:wrap}
+  .subbar select{background:#11151d;color:var(--text);border:1px solid var(--line);border-radius:6px;
+                 padding:4px 8px;font:inherit;font-size:12px;outline:none;max-width:150px}
+  .subbar button{padding:4px 10px;border:1px solid var(--line);border-radius:6px;font-size:12px;color:var(--dim)}
+  .subbar button:hover:not(:disabled){border-color:#3a4356;color:var(--text)}
+  .subbar button:disabled{opacity:.4;cursor:not-allowed}
+  .subt{overflow:auto;flex:1;padding:10px 14px;font-size:13px;line-height:1.6}
+  .subt .cue{display:flex;gap:10px;padding:2px 0}
+  .subt .cue .ts{color:var(--pink);font-family:Consolas,monospace;font-size:11.5px;
+                 font-variant-numeric:tabular-nums;flex:none;min-width:44px;padding-top:2px}
+  .subt .cue .tx{word-break:break-word}
+  .subt .hint{font-size:11.5px;color:#4d5566;padding:8px 0}
+
   /* 列表 / 评论 */
   .tabs{display:flex;gap:2px;padding:6px 8px 0;border-bottom:1px solid var(--line)}
   .tab{padding:6px 14px;font-size:12.5px;color:var(--dim);border-bottom:2px solid transparent;border-radius:6px 6px 0 0}
@@ -171,9 +186,20 @@
     <div class="tabs">
       <button class="tab cur" id="tabList">搜索结果</button>
       <button class="tab" id="tabCmt">评论</button>
+      <button class="tab" id="tabSub">字幕</button>
     </div>
     <div class="pane cur" id="list"><div class="empty">等待 search 命令</div></div>
     <div class="pane" id="cmts"><div class="empty">尚未加载评论</div></div>
+    <div class="pane" id="subs">
+      <div class="subbar">
+        <select id="subLang" title="字幕轨"></select>
+        <button id="subLoad">读取</button>
+        <button id="subMore" disabled>加载更多</button>
+        <button id="subExport">导出 txt</button>
+        <span id="subMeta">—</span>
+      </div>
+      <div class="subt" id="subBody"><div class="empty">点「读取」拉取当前视频字幕</div></div>
+    </div>
     <div class="cmtbox" id="cmtbox" style="display:none">
       <textarea id="cmtInput" rows="2" maxlength="1000" placeholder="写下你的评论…（Ctrl+Enter 发送）"></textarea>
       <button id="cmtSend">发送</button>
@@ -216,7 +242,7 @@ const HMS = s => { s = Math.max(0, Math.floor(s||0)); const h = Math.floor(s/360
 const IMG = u => u ? '/api/thumb?u=' + encodeURIComponent(u.startsWith('//') ? 'https:'+u : u) : '';
 function esc(s){ return String(s||'').replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
 
-let snap = null, basePos = 0, baseAt = 0, playing = false;
+let snap = null, basePos = 0, baseAt = 0, playing = false, lastBvid = '';
 let tab = 'list', cmtPage = 1;
 
 function tick(){
@@ -384,10 +410,11 @@ function showFolders(items){
 /* ---------- 评论 ---------- */
 function switchTab(t){
   tab = t;
-  $('#tabList').className = 'tab' + (t === 'list' ? ' cur' : '');
-  $('#tabCmt').className = 'tab' + (t === 'cmt' ? ' cur' : '');
-  $('#list').className = 'pane' + (t === 'list' ? ' cur' : '');
-  $('#cmts').className = 'pane' + (t === 'cmt' ? ' cur' : '');
+  [['list','#tabList','#list'],['cmt','#tabCmt','#cmts'],['sub','#tabSub','#subs']].forEach(([k,tid,pid]) => {
+    const te = $(tid), pe = $(pid);
+    if (te) te.className = 'tab' + (t === k ? ' cur' : '');
+    if (pe) pe.className = 'pane' + (t === k ? ' cur' : '');
+  });
   $('#cmtbar').style.display = t === 'cmt' ? 'flex' : 'none';
   $('#cmtbox').style.display = t === 'cmt' && !!(snap || {}).current ? 'flex' : 'none';
   renderInter(snap || {});
@@ -442,6 +469,95 @@ function renderComments(s){
   $('#cmtNext').disabled = !!meta.is_end;
 }
 
+/* ---------- 字幕 ---------- */
+let subLang = '', subOffset = 0, subDone = false, subLoading = false;
+
+function parseSubTracks(out){
+  const tracks = [];
+  out.split('\n').forEach(ln => {
+    const m = ln.match(/lan=(\S+)\s+(.*?)\s+ai=(\d)\s+lock=(\d)/);
+    if (m) tracks.push({lan:m[1], doc:m[2], ai:m[3]==='1', lock:m[4]==='1'});
+  });
+  return tracks;
+}
+
+async function loadSubTracks(){
+  const j = await cmd('subtitles', {});
+  if (!j.ok) return false;
+  const tracks = parseSubTracks(j.out);
+  const sel = $('#subLang');
+  if (!tracks.length){
+    sel.innerHTML = '<option>无字幕轨</option>';
+    $('#subBody').innerHTML = '<div class="empty">该视频没有平台字幕（画面内嵌硬字幕无法获取）</div>';
+    $('#subMeta').textContent = '0 轨';
+    subLang = '';
+    return false;
+  }
+  sel.innerHTML = tracks.map(t =>
+    `<option value="${esc(t.lan)}">${esc(t.doc||t.lan)}${t.ai?' · AI':''}${t.lock?' · 需解锁':''}</option>`).join('');
+  const usable = tracks.find(t => !t.lock && t.lan === 'ai-zh')
+    || tracks.find(t => !t.lock && /^zh/i.test(t.lan))
+    || tracks.find(t => !t.lock) || tracks[0];
+  sel.value = usable.lan; subLang = usable.lan;
+  $('#subMeta').textContent = tracks.length + ' 轨';
+  return true;
+}
+
+async function loadSubs(reset){
+  if (subLoading) return;
+  subLoading = true;
+  const body = $('#subBody');
+  try {
+    if (reset){ subOffset = 0; subDone = false; body.innerHTML = ''; }
+    const j = await cmd('subtitle', {lang: subLang, offset: subOffset, limit: 300});
+    if (!j.ok) return;
+    const lines = j.out.split('\n');
+    const head = lines[0] || '';
+    const cues = [];
+    lines.slice(1).forEach(ln => {
+      const m = ln.match(/^\[(\d+:\d{2})\]\s(.*)$/);
+      if (m) cues.push({ts:m[1], tx:m[2]});
+    });
+    body.insertAdjacentHTML('beforeend', cues.map(c =>
+      `<div class="cue"><span class="ts">${c.ts}</span><span class="tx">${esc(c.tx)}</span></div>`).join(''));
+    const nx = (j.out.match(/next: subtitle --offset (\d+)/) || [])[1];
+    if (nx){ subOffset = parseInt(nx, 10); $('#subMore').disabled = false; }
+    else { subDone = true; $('#subMore').disabled = true; }
+    const cm = head.match(/cues=(\d+)\s+chars=(\d+)/);
+    $('#subMeta').textContent = subLang + (cm ? ` · ${cm[1]} 句 / ${cm[2]} 字` : '')
+      + (subDone ? ' · 已到末尾' : ` · 已读至 ${subOffset}`);
+    if (!cues.length && reset) body.innerHTML = '<div class="empty">字幕内容为空</div>';
+    body.scrollTop = body.scrollHeight;
+  } finally { subLoading = false; }
+}
+
+async function exportSubs(){
+  const j = await cmd('subtitle', {lang: subLang, export:'txt'});
+  if (j.ok){
+    const m = j.out.match(/path=(.+)/);
+    toast('已导出：' + (m ? m[1].trim() : 'ok'));
+  }
+}
+
+$('#tabSub').onclick = async () => {
+  switchTab('sub');
+  if (!(snap||{}).current) return toast('先打开一个视频', true);
+  if (!subLang){
+    const ok = await loadSubTracks();
+    if (ok) await loadSubs(true);
+  }
+};
+$('#subLang').onchange = () => { subLang = $('#subLang').value; loadSubs(true); };
+$('#subLoad').onclick = async () => {
+  if (!subLang && !await loadSubTracks()) return;
+  await loadSubs(true);
+};
+$('#subMore').onclick = () => loadSubs(false);
+$('#subExport').onclick = async () => {
+  if (!subLang && !await loadSubTracks()) return;
+  exportSubs();
+};
+
 /* ---------- 主渲染 ---------- */
 function render(s){
   const p = s.player || {}, c = s.current;
@@ -451,6 +567,12 @@ function render(s){
   $('#mode').textContent = s.readonly ? 'MCP 模式' : 'serve 模式';
   $('#meta').textContent = 'uptime ' + Math.floor(s.uptime||0) + 's · total ' + CN(s.total||0);
 
+  if (c && c.bvid !== lastBvid){
+    lastBvid = c.bvid; subLang = ''; subOffset = 0; subDone = false;
+    $('#subLang').innerHTML = ''; $('#subMore').disabled = true;
+    $('#subMeta').textContent = '—';
+    $('#subBody').innerHTML = '<div class="empty">点「读取」拉取当前视频字幕</div>';
+  }
   if (c){
     $('#ptitle').textContent = c.title || '—';
     $('#pup').textContent = (c.up||'') + (c.mid ? ' · mid '+c.mid : '') + (c.dur ? ' · '+HMS(c.dur) : '');

@@ -130,5 +130,25 @@ async def me() -> str:
     return await core.execute("me", {})
 
 
+@mcp.tool()
+async def subtitles(bvid: str = "", page: int = 1) -> str:
+    """列出视频的字幕轨（B 站 CC 字幕 / AI 字幕，含语言与是否需解锁）。bvid 留空用当前视频，
+    page 为第几 P。画面内嵌的硬字幕没有数据源，取不到。先用它挑语言，再用 subtitle 读正文。"""
+    await core.bili.warmup()
+    return await core.execute("subtitles", {"bvid": bvid, "page": page})
+
+
+@mcp.tool()
+async def subtitle(bvid: str = "", lang: str = "", page: int = 1, offset: int = 0,
+                   limit: int = 200, export: str = "") -> str:
+    """读字幕正文，用于总结/整理视频内容。lang 留空自动选中文轨（ai-zh 优先）；
+    offset/limit 按句分页（limit 上限 500），返回每行 [mm:ss] 文本，末尾给下一页 offset；
+    export 填 srt/txt/md 时把全量字幕落盘到 .data/subs/ 并返回路径。"""
+    await core.bili.warmup()
+    return await core.execute("subtitle",
+                              {"bvid": bvid, "lang": lang, "page": page,
+                               "offset": offset, "limit": limit, "export": export})
+
+
 def run() -> None:
     mcp.run("stdio")
