@@ -1,0 +1,25 @@
+# 登录态与运行数据（含 cookie，绝不可提交）
+.data/
+cookie.json
+*.cookie
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# 临时与备份
+temp/
+output/
+*.orig.html
+*.bak

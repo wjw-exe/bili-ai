@@ -1,0 +1,263 @@
+"""命令总线：MCP / Web / CLI 三端共用同一个 execute"""
+
+import asyncio
+
+from . import fmt
+from .api import Bili
+from .http import NeedLogin
+from .store import store
+
+
+class Core:
+    def __init__(self) -> None:
+        self.bili = Bili()
+        # MCP 模式下后台跑在独立线程，跨 loop 调 API 会崩连接池，故仅只读观察
+        self.readonly = False
+
+    # ---------------- 命令 ----------------
+
+    async def execute(self, name: str, args: dict) -> str:
+        try:
+            # 后台扫码登录会改写 .data/cookie.json，跑命令前热重载一次
+            self.bili.http.sync_from_disk()
+            out = await getattr(self, f"cmd_{name}")(**args)
+            store.note(name, True, out.splitlines()[0] if out else "")
+            return out
+        except TypeError as e:
+            msg = f"BAD_ARGS: {e}"
+            store.note(name, False, msg)
+            return msg
+        except NeedLogin as e:
+            msg = f"ERR_NEED_LOGIN: {e.msg}（后台扫码登录，或 python main.py login）"
+            store.note(name, False, msg)
+            return msg
+        except Exception as e:
+            msg = f"{type(e).__name__}: {e}"
+            store.note(name, False, msg)
+            return msg
+
+    async def cmd_search(self, keyword: str, page: int = 1, limit: int = 10) -> str:
+        r = await self.bili.search(keyword, page, limit)
+        with store.lock:
+            store.view, store.query, store.page = "search", keyword, page
+            store.total, store.items = r["total"], r["items"]
+        return fmt.search(r)
+
+    async def cmd_open_video(self, bvid: str) -> str:
+        d = await self.bili.view(bvid)
+        with store.lock:
+            store.view, store.current = "video", d
+            store.player.bvid = d["bvid"]
+            store.player.title = d["title"]
+            store.player.dur = d["dur"]
+            store.player.base = 0.0
+            store.player.playing = False
+            store.comments, store.comments_meta = [], {}
+            store.inter = {"liked": None, "coins": None, "favoured": None}
+        await self._refresh_inter()
+        return "\n".join([fmt.detail(d), fmt.inter(store.inter), self._actions()])
+
+    async def cmd_comments(self, bvid: str = "", page: int = 1,
+                           limit: int = 20, mode: int = 3) -> str:
+        cur = await self._target(bvid)
+        if not cur:
+            return "ERR_NO_TARGET: 先 open_video 或传 bvid"
+        r = await self.bili.comments(cur["avid"], cur["bvid"], page, limit, mode)
+        with store.lock:
+            store.comments = r["items"]
+            store.comments_meta = {"bvid": r["bvid"], "page": page,
+                                   "total": r["total"], "source": r["source"],
+                                   "is_end": r["is_end"]}
+        return fmt.comments(r)
+
+    async def cmd_comment(self, bvid: str = "", message: str = "",
+                          root: int | str = 0, parent: int | str = 0) -> str:
+        cur = await self._target(bvid)
+        if not cur:
+            return "ERR_NO_TARGET"
+        r = await self.bili.comment_add(cur["avid"], cur["bvid"], message, root, parent)
+        line = f'ok comment  rpid={r["rpid"] or "-"}  {cur["bvid"]}'
+        try:                                     # 顺带刷新评论区首屏，便于确认已上墙
+            await self.cmd_comments(cur["bvid"], 1, 20, 2)
+        except Exception:
+            pass
+        return f'{line}\nmsg: {r["message"]}'
+
+    async def cmd_like(self, bvid: str = "", on: bool = True) -> str:
+        cur = await self._target(bvid)
+        if not cur:
+            return "ERR_NO_TARGET"
+        await self.bili.like(cur["avid"], cur["bvid"], on)
+        await self._refresh_inter()
+        return f'ok like={"on" if on else "off"}  {cur["bvid"]}\n{fmt.inter(store.inter)}'
+
+    async def cmd_coin(self, bvid: str = "", n: int = 1,
+                       also_like: bool = False) -> str:
+        cur = await self._target(bvid)
+        if not cur:
+            return "ERR_NO_TARGET"
+        r = await self.bili.coin(cur["avid"], cur["bvid"], n, also_like)
+        await self._refresh_inter()
+        return (f'ok coin={r["coins"]} also_like={int(bool(r["also_like"]))}  '
+                f'{cur["bvid"]}\n{fmt.inter(store.inter)}')
+
+    async def cmd_fav(self, bvid: str = "", folder: str = "") -> str:
+        cur = await self._target(bvid)
+        if not cur:
+            return "ERR_NO_TARGET"
+        fs = await self.bili.fav_folders()
+        if not fs:
+            return "ERR_NO_FOLDER: 账号下没有收藏夹"
+        target = None
+        if folder:
+            key = str(folder).strip()
+            target = next((f for f in fs if str(f["id"]) == key or f["title"] == key), None)
+            if not target:
+                names = ", ".join(f'{f["id"]}:{f["title"]}' for f in fs)
+                return f"ERR_BAD_FOLDER: {folder}  可选 [{names}]"
+        else:
+            target = fs[0]
+        await self.bili.fav_deal(cur["avid"], cur["bvid"], target["id"], True)
+        await self._refresh_inter()
+        return (f'ok fav={target["title"]}(id={target["id"]})  {cur["bvid"]}\n'
+                f'{fmt.inter(store.inter)}')
+
+    async def cmd_unfav(self, bvid: str = "", folder: str = "") -> str:
+        cur = await self._target(bvid)
+        if not cur:
+            return "ERR_NO_TARGET"
+        fs = await self.bili.fav_folders()
+        key = str(folder).strip()
+        targets = [f for f in fs if (not key or str(f["id"]) == key or f["title"] == key)]
+        if not targets:
+            return f"ERR_NO_FOLDER: {folder}"
+        for f in targets:
+            try:
+                await self.bili.fav_deal(cur["avid"], cur["bvid"], f["id"], False)
+            except Exception:                    # 不在该夹里会报错，忽略继续
+                continue
+        await self._refresh_inter()
+        return f'ok unfav  {cur["bvid"]}\n{fmt.inter(store.inter)}'
+
+    async def cmd_folders(self) -> str:
+        fs = await self.bili.fav_folders()
+        if not fs:
+            return "folders: (空)"
+        lines = [f"folders: {len(fs)}"] + [
+            f'- id={f["id"]}  {f["title"]}  count={f["count"]}' for f in fs]
+        return "\n".join(lines)
+
+    async def cmd_me(self) -> str:
+        from .auth import nav
+
+        info = await nav(self.bili.http)
+        with store.lock:
+            store.account = {"login": bool(info.get("is_login")),
+                             "uname": info.get("uname") or "",
+                             "mid": info.get("mid") or 0,
+                             "avatar": info.get("avatar") or ""}
+        if not info.get("is_login"):
+            return f'account: 未登录  {info.get("message") or ""}'.strip()
+        return (f'account: 已登录  uname={info["uname"]}  mid={info["mid"]}  '
+                f'vip={int(bool(info.get("vip")))}')
+
+    async def cmd_state(self) -> str:
+        with store.lock:
+            snap = store.snapshot()
+        lines: list[str] = []
+        if snap["view"] == "search":
+            lines.append(f'view=search  q="{snap["query"]}"  page={snap["page"]}  '
+                         f'total={fmt.cnt(snap["total"])}')
+            for i, it in enumerate(snap["items"], 1):
+                lines.append(f'#{i}  {it["bvid"]}  {it["dur"]:>6}  play={fmt.cnt(it["play"]):>7}  '
+                             f'up={it["up"]}  {it["title"][:48]}')
+        elif snap["view"] == "video" and snap["current"]:
+            lines.append(fmt.detail(snap["current"]))
+        else:
+            lines.append("view=idle  (无数据，先 search 或 open_video)")
+        if snap["player"]["bvid"]:
+            p = snap["player"]
+            lines.append(f'player: {"playing" if p["playing"] else "paused"} '
+                         f't={p["pos"]}/{p["dur"]} ({fmt.hms(p["pos"])})')
+        lines.append(self._actions(snap))
+        return "\n".join(lines)
+
+    async def cmd_play(self, bvid: str = "", at: float = 0.0) -> str:
+        if bvid and (not store.player.bvid or store.player.bvid != bvid):
+            await self.cmd_open_video(bvid)
+        if not store.player.bvid:
+            return "ERR_NO_TARGET: 先 open_video 或 play <bvid>"
+        store.player.play(at)
+        return self._player_line()
+
+    async def cmd_pause(self) -> str:
+        if not store.player.bvid:
+            return "ERR_NO_TARGET"
+        store.player.pause()
+        return self._player_line()
+
+    async def cmd_resume(self) -> str:
+        if not store.player.bvid:
+            return "ERR_NO_TARGET"
+        store.player.play(store.player.pos())
+        return self._player_line()
+
+    async def cmd_seek(self, to: str) -> str:
+        if not store.player.bvid:
+            return "ERR_NO_TARGET"
+        cur = store.player.pos()
+        t = str(to).strip()
+        target = cur + float(t[1:]) if t[:1] in "+-" else float(t)
+        store.player.seek(target)
+        return self._player_line()
+
+    async def cmd_status(self) -> str:
+        return self._player_line()
+
+    # ---------------- 辅助 ----------------
+
+    async def _target(self, bvid: str = "") -> dict | None:
+        """取当前视频；传了别的 bvid 就先打开它"""
+        cur = store.current
+        if bvid and (not cur or cur["bvid"] != bvid):
+            await self.cmd_open_video(bvid)
+            cur = store.current
+        return cur
+
+    async def _refresh_inter(self) -> None:
+        """刷新点赞/投币/收藏状态；未登录或出错则置 None（未知）"""
+        cur = store.current
+        if not cur:
+            return
+        aid, bvid = cur["avid"], cur["bvid"]
+        try:
+            like = await self.bili.like_state(aid, bvid)
+            coin = await self.bili.coin_state(aid, bvid)
+            fav = await self.bili.fav_state(aid, bvid)
+        except NeedLogin:
+            with store.lock:
+                store.inter = {"liked": None, "coins": None, "favoured": None}
+            return
+        except Exception:                        # 网络抖动不影响主流程
+            return
+        with store.lock:
+            store.inter = {"liked": like["liked"], "coins": coin["coins"],
+                           "favoured": fav["favoured"]}
+
+    def _player_line(self) -> str:
+        p = store.player
+        return (f'player: {"playing" if p.playing else "paused"}  {p.bvid}  '
+                f't={p.pos()}/{p.dur} ({fmt.hms(p.pos())})  q=-')
+
+    def _actions(self, snap: dict | None = None) -> str:
+        v = (snap or store.snapshot())["view"]
+        if v == "search":
+            return "actions: [open_video bvid] [search keyword --page]"
+        if v == "video":
+            return ("actions: [play] [pause] [seek +/-sec] [comments --page] "
+                    "[like --on/--off] [coin --n 2 --also-like] [fav --folder 名称] "
+                    "[unfav] [folders] [me] [state]")
+        return "actions: [search keyword] [open_video bvid]"
+
+
+core = Core()

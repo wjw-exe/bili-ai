@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>bili-ai · 后台</title>
+<style>
+  :root{
+    --bg:#0e1014; --panel:#161a22; --panel2:#1c2130; --line:#252b38;
+    --text:#e7eaf2; --dim:#8b93a7; --pink:#fb7299; --ok:#3ddc97; --warn:#ffb84d; --err:#ff7b7b;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font:14px/1.55 "Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+       height:100vh;display:flex;flex-direction:column;overflow:hidden}
+  button{font:inherit;color:inherit;cursor:pointer;background:none;border:none}
+  header{display:flex;align-items:center;gap:14px;padding:12px 18px;border-bottom:1px solid var(--line);background:var(--panel)}
+  .logo{font-size:16px;font-weight:600;letter-spacing:.5px}
+  .logo b{color:var(--pink)}
+  .badge{padding:2px 10px;border-radius:999px;font-size:12px;background:var(--panel2);border:1px solid var(--line);color:var(--dim)}
+  .badge.on{color:var(--ok);border-color:#245b46}
+  .badge.pink{color:var(--pink);border-color:#5a2a38}
+  .spacer{flex:1}
+  .meta{font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums}
+
+  /* 账号 */
+  .acct{display:flex;align-items:center;gap:8px;padding:3px 4px 3px 10px;border:1px solid var(--line);
+        border-radius:999px;background:var(--panel2);font-size:12px}
+  .acct img{width:22px;height:22px;border-radius:50%;object-fit:cover;background:#0a0c10}
+  .acct .nm{color:var(--text);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .acct button{color:var(--dim);font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line)}
+  .acct button:hover{color:var(--text);border-color:#3a4356}
+  .btn-login{padding:5px 14px;border-radius:999px;background:var(--pink);color:#1a1013;font-weight:600;font-size:12.5px}
+  .btn-login:hover{filter:brightness(1.08)}
+
+  main{flex:1;display:grid;grid-template-columns:400px 1fr 330px;gap:12px;padding:12px;min-height:0}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  .panel h2{font-size:12px;font-weight:600;color:var(--dim);letter-spacing:1px;padding:10px 14px;border-bottom:1px solid var(--line);text-transform:uppercase}
+
+  /* 播放器 */
+  .cover{position:relative;width:100%;aspect-ratio:16/9;background:#0a0c10;overflow:hidden}
+  .cover img{width:100%;height:100%;object-fit:cover;display:block}
+  .cover .ph{width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#39404f;font-size:13px}
+  .cover .badge{position:absolute;left:10px;top:10px;background:rgba(0,0,0,.6);backdrop-filter:blur(4px)}
+  .pbody{padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+  .ptitle{font-size:15px;font-weight:600;line-height:1.4;max-height:2.8em;overflow:hidden}
+  .pup{font-size:12px;color:var(--dim)}
+  .bar{height:6px;border-radius:3px;background:#2a3140;overflow:hidden;position:relative}
+  .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#fb7299,#ff9db8);transition:width .18s linear}
+  .times{display:flex;justify-content:space-between;font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums}
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:4px}
+  .stat{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 8px}
+  .stat b{display:block;font-size:13px}
+  .stat span{font-size:11px;color:var(--dim)}
+
+  /* 互动 */
+  .acts{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:6px}
+  .act{padding:7px 0;border:1px solid var(--line);border-radius:8px;background:var(--panel2);
+       font-size:12px;color:var(--dim);text-align:center;transition:.15s}
+  .act:hover{border-color:#3a4356;color:var(--text)}
+  .act.on{color:var(--pink);border-color:#5a2a38;background:#221b22}
+  .act:disabled{opacity:.45;cursor:not-allowed}
+
+  /* 列表 / 评论 */
+  .tabs{display:flex;gap:2px;padding:6px 8px 0;border-bottom:1px solid var(--line)}
+  .tab{padding:6px 14px;font-size:12.5px;color:var(--dim);border-bottom:2px solid transparent;border-radius:6px 6px 0 0}
+  .tab:hover{color:var(--text)}
+  .tab.cur{color:var(--pink);border-bottom-color:var(--pink);background:#1b1a20}
+  .pane{overflow:auto;flex:1;display:none}
+  .pane.cur{display:block}
+  .row{display:flex;gap:10px;padding:10px 14px;border-bottom:1px solid #1d222c;align-items:center;cursor:default}
+  .row:hover{background:#1a1f29}
+  .row.cur{background:#221b22;box-shadow:inset 3px 0 0 var(--pink)}
+  .idx{width:22px;color:#4d5566;font-size:12px;font-variant-numeric:tabular-nums}
+  .thumb{width:96px;aspect-ratio:16/9;border-radius:6px;background:#0a0c10;object-fit:cover;flex:none}
+  .info{min-width:0;flex:1}
+  .t{font-size:13px;line-height:1.4;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;word-break:break-word}
+  .sub{font-size:11px;color:var(--dim);margin-top:4px;display:flex;gap:10px}
+  .bvid{font-family:Consolas,monospace;color:#6f7a90}
+  .empty{color:#4d5566;text-align:center;padding:40px 0;font-size:13px}
+
+  .cmt{padding:10px 14px;border-bottom:1px solid #1d222c}
+  .cmt:hover{background:#1a1f29}
+  .cmt .h{display:flex;gap:8px;align-items:baseline;font-size:12px;color:var(--dim)}
+  .cmt .h b{color:#c3c9d6;font-weight:600;font-size:12.5px}
+  .cmt .h .lk{margin-left:auto;font-variant-numeric:tabular-nums}
+  .cmt .m{margin-top:4px;font-size:13px;line-height:1.5;word-break:break-word}
+  .cmtbar{display:flex;align-items:center;gap:10px;padding:8px 14px;border-top:1px solid var(--line);font-size:12px;color:var(--dim)}
+  .cmtbar button{padding:4px 10px;border:1px solid var(--line);border-radius:6px}
+  .cmtbar button:hover:not(:disabled){border-color:#3a4356;color:var(--text)}
+  .cmtbar button:disabled{opacity:.4;cursor:not-allowed}
+  .cmtbox{display:flex;gap:8px;align-items:flex-end;padding:10px 14px;border-top:1px solid var(--line)}
+  .cmtbox textarea{flex:1;resize:vertical;min-height:44px;padding:8px 10px;border-radius:8px;
+    border:1px solid var(--line);background:#11151d;color:var(--text);font:inherit;font-size:13px;outline:none}
+  .cmtbox textarea:focus{border-color:#3a4356}
+  .cmtbox button{padding:8px 16px;border:1px solid var(--line);border-radius:8px;color:var(--text)}
+  .cmtbox button:hover{border-color:#3a4356;background:#1a1f29}
+
+  /* 日志 */
+  .log{overflow:auto;flex:1;padding:8px 10px;font-family:Consolas,monospace;font-size:11.5px}
+  .l{display:flex;gap:8px;padding:3px 4px;border-radius:4px}
+  .l:hover{background:#1a1f29}
+  .l .lt{color:#4d5566;flex:none}
+  .l .c{color:#9db4ff;flex:none}
+  .l.bad .c{color:#ff7b7b}
+  .l .s{color:#c3c9d6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .foot{font-size:11px;color:#3d4453;text-align:center;padding:6px}
+
+  /* 弹层 */
+  .mask{position:fixed;inset:0;background:rgba(6,8,12,.72);backdrop-filter:blur(3px);display:none;
+        align-items:center;justify-content:center;z-index:50}
+  .mask.cur{display:flex}
+  .dlg{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px 22px;width:320px;
+       display:flex;flex-direction:column;gap:12px;align-items:center}
+  .dlg h3{font-size:14px;font-weight:600}
+  .dlg .qbox{width:220px;height:220px;background:#fff;border-radius:8px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+  .dlg .qbox img{width:100%;height:100%;object-fit:contain}
+  .dlg .tip{font-size:12px;color:var(--dim);text-align:center;min-height:18px}
+  .dlg .tip.ok{color:var(--ok)} .dlg .tip.bad{color:var(--err)}
+  .dlg .row2{display:flex;gap:8px}
+  .dlg .row2 button{padding:6px 14px;border:1px solid var(--line);border-radius:8px;font-size:12.5px}
+  .dlg .row2 button:hover{border-color:#3a4356}
+  .folders{width:100%;max-height:260px;overflow:auto;display:flex;flex-direction:column;gap:6px}
+  .folders button{text-align:left;padding:8px 12px;border:1px solid var(--line);border-radius:8px;font-size:13px}
+  .folders button:hover{border-color:var(--pink);color:var(--pink)}
+
+  #toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:#242a36;border:1px solid var(--line);
+         color:var(--text);padding:9px 16px;border-radius:8px;font-size:13px;opacity:0;pointer-events:none;transition:.2s;z-index:99;max-width:70vw}
+  #toast.cur{opacity:1}
+  #toast.bad{border-color:#5a2a38;color:#ffb3c4}
+
+  ::-webkit-scrollbar{width:8px;height:8px}
+  ::-webkit-scrollbar-thumb{background:#2a3140;border-radius:4px}
+  ::-webkit-scrollbar-track{background:transparent}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">bili<b>-ai</b></div>
+  <span class="badge" id="view">idle</span>
+  <span class="badge" id="mode">观察模式</span>
+  <div class="spacer"></div>
+  <div class="meta" id="meta">—</div>
+  <div id="acct"></div>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>Now Playing</h2>
+    <div class="cover">
+      <div class="ph" id="coverPh">逻辑播放 · 无解码器</div>
+      <img id="cover" style="display:none" alt="">
+      <span class="badge" id="pstate">idle</span>
+    </div>
+    <div class="pbody">
+      <div class="ptitle" id="ptitle">尚未打开视频</div>
+      <div class="pup" id="pup">—</div>
+      <div class="bar"><i id="bar"></i></div>
+      <div class="times"><span id="tcur">00:00</span><span id="tdur">00:00</span></div>
+      <div class="stats" id="stats"></div>
+      <div class="acts">
+        <button class="act" id="btnLike" data-act="like">点赞</button>
+        <button class="act" id="btnCoin" data-act="coin">投币</button>
+        <button class="act" id="btnFav" data-act="fav">收藏</button>
+        <button class="act" id="btnCmt" data-act="comments">评论</button>
+      </div>
+    </div>
+    <div class="foot">进度由服务端时钟推进 · 0.35s 同步</div>
+  </section>
+
+  <section class="panel">
+    <div class="tabs">
+      <button class="tab cur" id="tabList">搜索结果</button>
+      <button class="tab" id="tabCmt">评论</button>
+    </div>
+    <div class="pane cur" id="list"><div class="empty">等待 search 命令</div></div>
+    <div class="pane" id="cmts"><div class="empty">尚未加载评论</div></div>
+    <div class="cmtbox" id="cmtbox" style="display:none">
+      <textarea id="cmtInput" rows="2" maxlength="1000" placeholder="写下你的评论…（Ctrl+Enter 发送）"></textarea>
+      <button id="cmtSend">发送</button>
+    </div>
+    <div class="cmtbar" id="cmtbar" style="display:none">
+      <span id="cmtMeta">—</span>
+      <div class="spacer"></div>
+      <button id="cmtPrev">上一页</button>
+      <button id="cmtNext">下一页</button>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Command Log</h2>
+    <div class="log" id="log"><div class="empty">—</div></div>
+  </section>
+</main>
+
+<div class="mask" id="mask">
+  <div class="dlg" id="dlgQr">
+    <h3>扫码登录</h3>
+    <div class="qbox"><img id="qrImg" alt="二维码"></div>
+    <div class="tip" id="qrTip">正在申请二维码…</div>
+    <div class="row2"><button id="qrRefresh">刷新二维码</button><button id="qrClose">关闭</button></div>
+  </div>
+  <div class="dlg" id="dlgFav" style="display:none">
+    <h3>选择收藏夹</h3>
+    <div class="folders" id="folderList"></div>
+    <div class="row2"><button id="favClose">取消</button></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const CN = n => n >= 1e8 ? (n/1e8).toFixed(1)+'亿' : n >= 1e4 ? (n/1e4).toFixed(1)+'万' : String(n||0);
+const HMS = s => { s = Math.max(0, Math.floor(s||0)); const h = Math.floor(s/3600), m = Math.floor(s%3600/60), x = s%60;
+  return (h? h+':' : '') + String(m).padStart(2,'0') + ':' + String(x).padStart(2,'0'); };
+const IMG = u => u ? '/api/thumb?u=' + encodeURIComponent(u.startsWith('//') ? 'https:'+u : u) : '';
+function esc(s){ return String(s||'').replace(/[&<>"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m])); }
+
+let snap = null, basePos = 0, baseAt = 0, playing = false;
+let tab = 'list', cmtPage = 1;
+
+function tick(){
+  if (!snap) return;
+  const p = snap.player || {};
+  let pos = p.pos || 0;
+  if (playing && p.dur) pos = Math.min(p.dur, pos + (performance.now() - baseAt)/1000);
+  $('#tcur').textContent = HMS(pos);
+  $('#tdur').textContent = HMS(p.dur);
+  $('#bar').style.width = p.dur ? Math.min(100, pos/p.dur*100) + '%' : '0%';
+}
+setInterval(tick, 200);
+
+/* ---------- 请求 ---------- */
+async function api(path, body){
+  const opt = body ? {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)} : {};
+  const r = await fetch(path, opt);
+  return r.json();
+}
+let toastT = null;
+function toast(msg, bad){
+  const el = $('#toast');
+  el.textContent = msg;
+  el.className = 'cur' + (bad ? ' bad' : '');
+  clearTimeout(toastT);
+  toastT = setTimeout(() => el.className = '', 2600);
+}
+async function cmd(name, args){
+  const j = await api('/api/cmd', {name, args: args||{}});
+  if (!j.ok) toast(j.out.split('\n')[0], true);
+  else toast(j.out.split('\n')[0]);
+  return j;
+}
+
+/* ---------- 账号 ---------- */
+let qrTimer = null, qrKey = null;
+
+function renderAccount(a){
+  a = a || {};
+  const box = $('#acct');
+  if (a.login){
+    box.innerHTML = `
+      <div class="acct">
+        ${a.avatar ? `<img src="${IMG(a.avatar)}" alt="">` : ''}
+        <span class="nm">${esc(a.uname)}</span>
+        <button id="btnLogout">退出</button>
+      </div>`;
+    $('#btnLogout').onclick = async () => {
+      await api('/api/auth/logout', {});
+      toast('已退出登录');
+      refreshAuth();
+    };
+  } else {
+    box.innerHTML = '<button class="btn-login" id="btnLogin">扫码登录</button>';
+    $('#btnLogin').onclick = openQr;
+  }
+}
+
+async function refreshAuth(){
+  try {
+    const info = await api('/api/auth');
+    renderAccount(info.is_login ? {login:true, uname:info.uname, mid:info.mid, avatar:info.avatar} : {login:false});
+  } catch (e) { /* 网络异常时保留上次渲染 */ }
+}
+
+function closeMask(){
+  $('#mask').className = 'mask';
+  $('#dlgQr').style.display = 'flex';
+  $('#dlgFav').style.display = 'none';
+  if (qrTimer) { clearInterval(qrTimer); qrTimer = null; }
+}
+
+async function openQr(){
+  $('#mask').className = 'mask cur';
+  $('#dlgQr').style.display = 'flex';
+  $('#dlgFav').style.display = 'none';
+  $('#qrTip').className = 'tip';
+  $('#qrTip').textContent = '正在申请二维码…';
+  $('#qrImg').removeAttribute('src');
+  if (qrTimer) { clearInterval(qrTimer); qrTimer = null; }
+  const r = await api('/api/auth/qr', {});
+  if (!r.ok){ $('#qrTip').textContent = r.msg || '申请失败'; $('#qrTip').className='tip bad'; return; }
+  qrKey = r.key;
+  $('#qrImg').src = r.png;
+  $('#qrTip').textContent = '用手机 B 站客户端扫一扫';
+  qrTimer = setInterval(pollQr, 1600);
+}
+
+async function pollQr(){
+  if (!qrKey) return;
+  let r;
+  try { r = await api('/api/auth/poll?key=' + encodeURIComponent(qrKey)); }
+  catch (e) { return; }
+  const tip = $('#qrTip');
+  if (r.status === 'scanned'){ tip.textContent = '已扫码，请在手机上确认登录'; tip.className = 'tip'; }
+  else if (r.status === 'expired'){
+    tip.textContent = '二维码已失效，点「刷新二维码」重试'; tip.className = 'tip bad';
+    clearInterval(qrTimer); qrTimer = null;
+  } else if (r.status === 'ok'){
+    tip.textContent = '登录成功：' + (r.uname || '') ; tip.className = 'tip ok';
+    clearInterval(qrTimer); qrTimer = null;
+    toast('登录成功：' + (r.uname || ''));
+    setTimeout(() => { closeMask(); refreshAuth(); }, 700);
+  } else {
+    tip.textContent = '等待扫码…';
+  }
+}
+
+/* ---------- 互动 ---------- */
+function renderInter(s){
+  const it = s.inter || {};
+  const cur = s.current;
+  const login = (s.account || {}).login;
+  const on = v => v === true ? ' on' : '';
+  const like = $('#btnLike'), coin = $('#btnCoin'), fav = $('#btnFav'), cmt = $('#btnCmt');
+  like.textContent = it.liked === true ? '已赞' : (it.liked === false ? '点赞' : '点赞');
+  like.className = 'act' + on(it.liked);
+  coin.textContent = it.coins ? ('已投 ' + it.coins) : '投币';
+  coin.className = 'act' + (it.coins ? ' on' : '');
+  fav.textContent = it.favoured === true ? '已收藏' : '收藏';
+  fav.className = 'act' + on(it.favoured);
+  [like, coin, fav].forEach(b => b.disabled = !cur);
+  cmt.disabled = !cur;
+  cmt.className = 'act' + (tab === 'cmt' ? ' on' : '');
+}
+
+$('#btnLike').onclick = async () => {
+  const it = (snap && snap.inter) || {};
+  await cmd('like', {on: !(it.liked === true)});
+};
+$('#btnCoin').onclick = async () => {
+  const it = (snap && snap.inter) || {};
+  if (it.coins > 0) return toast('该视频已投过币');
+  await cmd('coin', {n: 2, also_like: false});
+};
+$('#btnFav').onclick = async () => {
+  const it = (snap && snap.inter) || {};
+  if (it.favoured === true) return cmd('unfav', {});
+  const r = await fetch('/api/folders').then(x => x.json());
+  if (!r.ok){
+    toast(r.msg || '读取收藏夹失败', true);
+    if (r.need_login) openQr();
+    return;
+  }
+  if (!r.items.length) return toast('账号下没有收藏夹', true);
+  showFolders(r.items);
+};
+$('#btnCmt').onclick = () => { switchTab('cmt'); loadComments(1); };
+
+function showFolders(items){
+  $('#mask').className = 'mask cur';
+  $('#dlgQr').style.display = 'none';
+  $('#dlgFav').style.display = 'flex';
+  $('#folderList').innerHTML = items.map(f =>
+    `<button data-id="${f.id}">${esc(f.title)} <span style="color:var(--dim);font-size:11px">${f.count}</span></button>`
+  ).join('');
+  $('#folderList').querySelectorAll('button').forEach(b => {
+    b.onclick = async () => {
+      closeMask();
+      await cmd('fav', {folder: b.dataset.id});
+    };
+  });
+}
+
+/* ---------- 评论 ---------- */
+function switchTab(t){
+  tab = t;
+  $('#tabList').className = 'tab' + (t === 'list' ? ' cur' : '');
+  $('#tabCmt').className = 'tab' + (t === 'cmt' ? ' cur' : '');
+  $('#list').className = 'pane' + (t === 'list' ? ' cur' : '');
+  $('#cmts').className = 'pane' + (t === 'cmt' ? ' cur' : '');
+  $('#cmtbar').style.display = t === 'cmt' ? 'flex' : 'none';
+  $('#cmtbox').style.display = t === 'cmt' && !!(snap || {}).current ? 'flex' : 'none';
+  renderInter(snap || {});
+}
+$('#tabList').onclick = () => switchTab('list');
+$('#tabCmt').onclick = () => { switchTab('cmt'); if (!((snap||{}).comments||[]).length) loadComments(1); };
+
+async function sendComment(){
+  const el = $('#cmtInput');
+  const msg = (el.value || '').trim();
+  if (!msg) return toast('评论内容不能为空', true);
+  const j = await cmd('comment', {message: msg});
+  if (!j.ok) return;
+  el.value = '';
+  await loadComments(1);
+}
+$('#cmtSend').onclick = sendComment;
+$('#cmtInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)){ e.preventDefault(); sendComment(); }
+});
+
+async function loadComments(page){
+  const j = await cmd('comments', {page, limit: 20});
+  if (j.ok) cmtPage = page;
+}
+
+async function refreshComments(){
+  const j = await cmd('comments', {page: cmtPage, limit: 20});
+  return j.ok;
+}
+
+$('#cmtPrev').onclick = () => { if (cmtPage > 1) loadComments(cmtPage - 1); };
+$('#cmtNext').onclick = () => loadComments(cmtPage + 1);
+
+function renderComments(s){
+  const list = s.comments || [], meta = s.comments_meta || {};
+  const box = $('#cmts');
+  $('#cmtbox').style.display = (tab === 'cmt' && s.current) ? 'flex' : 'none';
+  if (!list.length){
+    box.innerHTML = '<div class="empty">尚未加载评论</div>';
+    $('#cmtMeta').textContent = '—';
+    $('#cmtPrev').disabled = true; $('#cmtNext').disabled = true;
+    return;
+  }
+  box.innerHTML = list.map(c => `
+    <div class="cmt">
+      <div class="h"><b>${esc(c.uname)}</b><span class="lk">赞 ${CN(c.like)}${c.sub ? ' · 回复 '+CN(c.sub) : ''}</span></div>
+      <div class="m">${esc(c.msg)}</div>
+    </div>`).join('');
+  $('#cmtMeta').textContent = `第 ${meta.page||1} 页 · 共 ${CN(meta.total||0)} 条` + (meta.is_end ? ' · 已到末页' : '');
+  $('#cmtPrev').disabled = (meta.page||1) <= 1;
+  $('#cmtNext').disabled = !!meta.is_end;
+}
+
+/* ---------- 主渲染 ---------- */
+function render(s){
+  const p = s.player || {}, c = s.current;
+
+  $('#view').textContent = 'view: ' + (s.view || 'idle');
+  $('#view').className = 'badge' + (s.view === 'video' ? ' pink' : s.view === 'search' ? ' on' : '');
+  $('#mode').textContent = s.readonly ? 'MCP 模式' : 'serve 模式';
+  $('#meta').textContent = 'uptime ' + Math.floor(s.uptime||0) + 's · total ' + CN(s.total||0);
+
+  if (c){
+    $('#ptitle').textContent = c.title || '—';
+    $('#pup').textContent = (c.up||'') + (c.mid ? ' · mid '+c.mid : '') + (c.dur ? ' · '+HMS(c.dur) : '');
+    if (c.pic){ $('#cover').src = IMG(c.pic); $('#cover').style.display='block'; $('#coverPh').style.display='none'; }
+    $('#stats').innerHTML = [
+      ['播放', CN(c.view)], ['点赞', CN(c.like)], ['投币', CN(c.coin)],
+      ['收藏', CN(c.fav)], ['弹幕', CN(c.danmaku)], ['评论', CN(c.reply)]
+    ].map(([k,v]) => `<div class="stat"><b>${v}</b><span>${k}</span></div>`).join('');
+  } else {
+    $('#ptitle').textContent = '尚未打开视频';
+    $('#pup').textContent = '—'; $('#stats').innerHTML = '';
+    $('#cover').style.display='none'; $('#coverPh').style.display='flex'; $('#coverPh').textContent='逻辑播放 · 无解码器';
+  }
+  $('#pstate').textContent = p.bvid ? (p.playing ? 'playing' : 'paused') : 'idle';
+  $('#pstate').className = 'badge' + (p.playing ? ' on' : '');
+
+  const items = s.items || [];
+  $('#tabList').textContent = s.view === 'search' ? `搜索结果 (${items.length})` : s.view === 'video' ? '详情' : '搜索结果';
+  if (items.length){
+    $('#list').innerHTML = items.map((it,i) => `
+      <div class="row ${p.bvid === it.bvid ? 'cur' : ''}">
+        <div class="idx">${i+1}</div>
+        ${it.pic ? `<img class="thumb" src="${IMG(it.pic)}" loading="lazy" alt="">` : '<div class="thumb"></div>'}
+        <div class="info">
+          <div class="t">${esc(it.title)}</div>
+          <div class="sub"><span class="bvid">${it.bvid}</span><span>${it.dur}</span><span>${CN(it.play)} 播放</span><span>${esc(it.up)}</span></div>
+        </div>
+      </div>`).join('');
+  } else if (s.view === 'idle'){
+    $('#list').innerHTML = '<div class="empty">等待 search 命令</div>';
+  } else {
+    $('#list').innerHTML = '<div class="empty">无数据（可能命中风控）</div>';
+  }
+
+  renderComments(s);
+  renderInter(s);
+
+  const log = s.log || [];
+  $('#log').innerHTML = log.length ? log.map(l =>
+    `<div class="l ${l.ok?'':'bad'}" title="${esc(l.cmd)} · ${esc(l.summary)}"><span class="lt">${l.t}</span><span class="c">${esc(l.cmd)}</span><span class="s">${esc(l.summary)}</span></div>`
+  ).join('') : '<div class="empty">—</div>';
+}
+
+$('#qrRefresh').onclick = openQr;
+$('#qrClose').onclick = closeMask;
+$('#favClose').onclick = closeMask;
+$('#mask').onclick = e => { if (e.target === $('#mask')) closeMask(); };
+
+const es = new EventSource('/api/events');
+es.onmessage = e => {
+  const s = JSON.parse(e.data);
+  snap = s; playing = !!(s.player && s.player.playing);
+  basePos = (s.player && s.player.pos) || 0; baseAt = performance.now();
+  render(s); tick();
+  renderAccount(s.account && s.account.login ? s.account : {login:false});
+};
+es.onerror = () => { $('#mode').textContent = '断线重连中…'; };
+
+refreshAuth();
+</script>
+</body>
+</html>
