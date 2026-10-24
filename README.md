@@ -1,13 +1,5 @@
 ---
-AIGC:
-    Label: "1"
-    ContentProducer: 001191440300708461136T1XGW3
-    ProduceID: 297ab8dbc8f4cde8dd6b234597dbc01a_3fb4c364cf8011f19f8752540064ee0f
-    ReservedCode1: oechxrfWUmh5oUZDI79c9ej2qh/VqYNeSGluuLvaUdDQMyQDxUCWREzdoTxV/aY5OcgeRQyxr3jlRPlPmguW2zSWK9kqOdYcUEuajwD38WRYU5v818Ybz4r/xspl811du5A/Ylk4RHEQS7OobD+jlqQCtzoVJF8QOnr4vM5aXR5E9CfjxeHJrVgTU1s=
-    ContentPropagator: 001191440300708461136T1XGW3
-    PropagateID: 297ab8dbc8f4cde8dd6b234597dbc01a_3fb4c364cf8011f19f8752540064ee0f
-    ReservedCode2: oechxrfWUmh5oUZDI79c9ej2qh/VqYNeSGluuLvaUdDQMyQDxUCWREzdoTxV/aY5OcgeRQyxr3jlRPlPmguW2zSWK9kqOdYcUEuajwD38WRYU5v818Ybz4r/xspl811du5A/Ylk4RHEQS7OobD+jlqQCtzoVJF8QOnr4vM5aXR5E9CfjxeHJrVgTU1s=
----
+
 
 ---
 为 ai 而生的哔哩哔哩
