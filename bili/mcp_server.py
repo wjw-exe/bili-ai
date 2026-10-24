@@ -150,5 +150,52 @@ async def subtitle(bvid: str = "", lang: str = "", page: int = 1, offset: int = 
                                "offset": offset, "limit": limit, "export": export})
 
 
+@mcp.tool()
+async def inbox(kind: str = "all", limit: int = 20, only_unreplied: bool = True) -> str:
+    """列出别人回复我 / @我的评论消息，供 AI 生成回复文案。
+
+    kind: all（回复+@）/ reply（只看别人回复我）/ at（只看 @我）；
+    only_unreplied=True 时只返回还没回复过的消息。
+    每条给出 msg_id、是谁、来自哪个视频/文章、对方说了什么、我的原评论、状态。
+    本工具只做检测，不会发送任何内容。"""
+    await core.bili.warmup()
+    return await core.execute("inbox", {"kind": kind, "limit": limit,
+                                       "only_unreplied": only_unreplied})
+
+
+@mcp.tool()
+async def reply(msg_id: str, message: str) -> str:
+    """把 AI 生成的文案作为评论回复发出（回复对方那条消息所在评论区）。需要登录态。
+
+    msg_id 取自 inbox 的结果；message 为要发布的回复正文，必填。"""
+    await core.bili.warmup()
+    return await core.execute("reply", {"msg_id": msg_id, "message": message})
+
+
+@mcp.tool()
+async def roam_next(task_id: str = "") -> str:
+    """取一个 AI 巡览待评论任务：视频信息 + 字幕正文（前 2000 字），供阅读后写评论。
+
+    task_id 留空取最早的 waiting 任务。任务由后台巡览自动产生（先读字幕，
+    读不到字幕的视频不会生成任务）。读完据此写一条评论，再用 roam_comment 回填。"""
+    await core.bili.warmup()
+    return await core.execute("roam_next", {"task_id": task_id})
+
+
+@mcp.tool()
+async def roam_comment(task_id: str, text: str) -> str:
+    """把 AI 写好的评论正文发布到该巡览任务的视频下（会公开发布，不可撤回）。
+
+    task_id 取自 roam_next；text 为评论正文，必填。受每日上限约束。需要登录态。"""
+    await core.bili.warmup()
+    return await core.execute("roam_comment", {"task_id": task_id, "message": text})
+
+
+@mcp.tool()
+async def roam_status() -> str:
+    """查看 AI 巡览状态：开关/频率/每日上限/来源/统计，以及最近任务（含 skipped 原因）。"""
+    return core.roam.status_text() + "\n" + core.roam.list_text("", 10)
+
+
 def run() -> None:
     mcp.run("stdio")

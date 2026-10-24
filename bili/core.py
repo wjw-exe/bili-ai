@@ -1,6 +1,7 @@
 """命令总线：MCP / Web / CLI 三端共用同一个 execute"""
 
 import asyncio
+import time
 
 from . import fmt
 from .api import Bili
@@ -124,11 +125,12 @@ class Core:
         return Path(__file__).resolve().parent.parent / ".data" / "subs"
 
     async def cmd_comment(self, bvid: str = "", message: str = "",
-                          root: int | str = 0, parent: int | str = 0) -> str:
+                          root: int | str = 0, parent: int | str = 0,
+                          type: int = 1) -> str:
         cur = await self._target(bvid)
         if not cur:
             return "ERR_NO_TARGET"
-        r = await self.bili.comment_add(cur["avid"], cur["bvid"], message, root, parent)
+        r = await self.bili.comment_add(cur["avid"], cur["bvid"], message, root, parent, type)
         line = f'ok comment  rpid={r["rpid"] or "-"}  {cur["bvid"]}'
         try:                                     # 顺带刷新评论区首屏，便于确认已上墙
             await self.cmd_comments(cur["bvid"], 1, 20, 2)
@@ -198,6 +200,140 @@ class Core:
             return "folders: (空)"
         lines = [f"folders: {len(fs)}"] + [
             f'- id={f["id"]}  {f["title"]}  count={f["count"]}' for f in fs]
+        return "\n".join(lines)
+
+    # ---------------- 消息收件箱（回复我的 / @我的） ----------------
+
+    @property
+    def inbox(self):
+        """按 Core 取收件箱视图；数据落 .data/inbox.json，跨端共享 store.inbox"""
+        from .inbox import get_inbox
+
+        return get_inbox(self)
+
+    async def cmd_inbox(self, kind: str = "all", limit: int = 20,
+                        only_unreplied: bool = True) -> str:
+        """只做检测：列出别人回复我 / @我的评论消息，不回任何东西。
+
+        回复文案由调用方（MCP 客户端 AI 或网页输入框）生成后交给 reply。
+        """
+        items = await self.inbox.list(kind, bool(only_unreplied), limit)
+        with store.lock:
+            stats = dict(store.inbox.get("stats") or {})
+        head = (f'inbox: {len(items)} 条  kind={kind}  '
+                f'only_unreplied={int(bool(only_unreplied))}  '
+                f'fetched={stats.get("fetched") or 0}  '
+                f'replied={stats.get("replied") or 0}')
+        if stats.get("err"):
+            head += f'  err={stats["err"][:120]}'
+        if not items:
+            return head + "\n(没有匹配的消息；文案由调用方生成，本工具不自动回复)"
+        lines = [head]
+        for m in items:
+            src = ("视频 " + _bvid_of(m.get("uri") or "")) if m.get("type") == 1 else \
+                  ("文章 " + str(m.get("uri") or "")) if m.get("type") == 12 else "动态"
+            title = (m.get("title") or "")[:40]
+            lines.append(f'- msg_id={m["msg_id"]}  [{m["kind"]}]  '
+                         f'{m.get("uname") or "?"}({m.get("mid") or 0})  '
+                         f'status={m.get("status") or "new"}  src={src}  {title}')
+            lines.append(f'  他说: {(m.get("his_msg") or "(空)")[:160]}')
+            if m.get("my_msg"):
+                lines.append(f'  我: {m["my_msg"][:120]}')
+            if m.get("status") == "replied":
+                lines.append(f'  已回: {(m.get("replied_text") or "")[:120]}  '
+                             f'rpid={m.get("replied_rpid") or "-"}')
+        lines.append('actions: [reply --msg-id <id> --message "<AI 生成的文案>"]')
+        return "\n".join(lines)
+
+    async def cmd_reply(self, msg_id: str, message: str = "") -> str:
+        """把调用方传入的文案作为评论回复发出；文案必填，项目内不生成任何文案。"""
+        text = (message or "").strip()
+        if not text:
+            return "ERR_NEED_TEXT: message 必填（文案由调用方 AI 生成后传入）"
+        if len(text) > 1000:
+            return "ERR_TOO_LONG: 回复内容超过 1000 字上限"
+        key = str(msg_id or "").strip()
+        if not key:
+            return "ERR_NEED_MSG_ID: 缺少 msg_id，先执行 inbox 查看"
+        msg = None
+        for m in await self.inbox.list("all", False, 100):
+            if str(m.get("msg_id")) == key:
+                msg = m
+                break
+        if not msg:                                   # 不在最近一页里，直连接口再找一次
+            for m in await self.inbox.fetch("all"):
+                if str(m.get("msg_id")) == key:
+                    msg = m
+                    break
+        if not msg:
+            return f"ERR_NO_MSG: msg_id={key} 不在当前消息列表（可能已过期）"
+        r = await self.bili.comment_add(int(msg["oid"]), _bvid_of(msg.get("uri") or ""),
+                                        text, msg.get("root") or 0,
+                                        msg.get("parent") or 0, int(msg.get("type") or 1))
+        self.inbox.mark_replied(key, text, r["rpid"])
+        return (f'ok reply  rpid={r["rpid"] or "-"}  msg_id={key}  '
+                f'type={msg.get("type")}  oid={msg.get("oid")}\n'
+                f'to: {msg.get("uname") or "?"}  ({msg.get("kind")})\n'
+                f'text: {text[:120]}')
+
+    # ---------------- AI 巡览（自己看 B 站） ----------------
+
+    @property
+    def roam(self):
+        """按 Core 取巡览器；状态落 .data/roam.json，跨端共享 store.roam"""
+        from .roam import get_roam
+
+        return get_roam(self)
+
+    async def cmd_roam(self, on=None, off=None, interval=0, max_per_day=-1,
+                       source: str = "", keyword: str = "") -> str:
+        """配置巡览：开关 / 频率(秒,下限120) / 每日发布上限(0=不限) / 来源 / 关键词"""
+        if off is not None and on is None:      # CLI 的 --off 无值解析为 True
+            v = off
+            flag = (v is True) or str(v).strip().lower() not in ("0", "false", "off", "no", "n", "否")
+            on = not flag
+        return self.roam.configure(on=on, interval=interval,
+                                   max_per_day=max_per_day,
+                                   source=source, keyword=keyword)
+
+    async def cmd_roam_list(self, status: str = "", limit: int = 20) -> str:
+        return self.roam.list_text(status, limit)
+
+    async def cmd_roam_next(self, task_id: str = "") -> str:
+        """取一个 waiting 任务：视频信息 + 字幕正文，供调用方 AI 阅读后写评论"""
+        return self.roam.next_text(task_id)
+
+    async def cmd_roam_comment(self, task_id: str = "", message: str = "") -> str:
+        """回填文案并发布（文案由调用方传入，项目内不生成）"""
+        r = await self.roam.publish(task_id, message)
+        if not r.get("ok"):
+            return r["msg"]
+        self.roam._sync()
+        return f'{r["msg"]}\ntext: {str(message).strip()[:120]}'
+
+    async def cmd_roam_skip(self, task_id: str = "", reason: str = "manual") -> str:
+        out = self.roam.skip(task_id, reason)
+        self.roam._sync()
+        return out
+
+    async def cmd_roam_check(self, count: int = 1) -> str:
+        """立刻跑一轮取片（只落任务，不发任何评论）"""
+        self.roam._sync()
+        s = await self.roam.check(count, force=True)
+        head = (f'roam_check: tried={s["tried"]}  picked={s["picked"]}  '
+                f'skipped={s["skipped"]}  err={s["err"] or "-"}')
+        if s["note"]:
+            head += f'\nnote: {s["note"]}'
+        lines = [head]
+        for tid in s["tasks"]:
+            t = self.roam.take_next(tid)
+            if t:
+                lines.append(f'+ task={t["task_id"]}  {t["bvid"]}  '
+                             f'lan={t["lan"]}  cues={t["n_cues"]}  chars={t["chars"]}  '
+                             f'《{t["title"][:40]}》')
+        lines.append(self.roam.list_text("", 5))
+        lines.append("actions: [roam_next] "
+                     '[roam_comment --task-id T --message "文案"] [roam_skip --task-id T]')
         return "\n".join(lines)
 
     async def cmd_me(self) -> str:
@@ -317,8 +453,18 @@ class Core:
             return ("actions: [play] [pause] [seek +/-sec] [comments --page] "
                     "[subtitles] [subtitle --lang ai-zh --offset 0 --limit 200] "
                     "[like --on/--off] [coin --n 2 --also-like] [fav --folder 名称] "
-                    "[unfav] [folders] [me] [state]")
+                    "[unfav] [folders] [me] [state] [inbox --kind all] "
+                    "[reply --msg-id <id> --message \"文案\"] "
+                    "[roam --on] [roam_check] [roam_next]")
         return "actions: [search keyword] [open_video bvid]"
+
+
+def _bvid_of(uri: str) -> str:
+    """从消息 uri 里抠出 BV 号（视频类消息才有）"""
+    import re
+
+    m = re.search(r"(BV[0-9A-Za-z]{10})", str(uri or ""))
+    return m.group(1) if m else ""
 
 
 core = Core()

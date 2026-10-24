@@ -4,6 +4,8 @@ python main.py serve            # 只开可视化后台 http://127.0.0.1:8770
 python main.py mcp              # MCP stdio 服务 + 后台线程（后台只读）
 python main.py mcp --no-web     # 纯 MCP，不起后台
 python main.py cli search 关键词 # 命令行
+python main.py cli inbox --kind reply   # 检测别人回复我 / @我的消息（只读）
+python main.py cli reply <msg_id> --message "文案"  # 手动回一条（需登录态）
 python main.py login            # 扫码登录（二维码图片自动弹出，手机扫）
 python main.py login --import-cookie "SESSDATA=xx; bili_jct=yy"  # 手动导入
 python main.py status           # 查看登录态
@@ -55,7 +57,7 @@ def _parse_cli(cmd: str, rest: list[str]) -> dict:
     if pos:
         main_key = {"search": "keyword", "open_video": "bvid", "play": "bvid",
                     "comment": "message", "subtitles": "bvid",
-                    "subtitle": "bvid"}.get(cmd)
+                    "subtitle": "bvid", "reply": "msg_id"}.get(cmd)
         if main_key and main_key not in args:
             args[main_key] = pos[0]
     return args

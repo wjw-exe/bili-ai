@@ -65,6 +65,24 @@ class Store:
         self.subs: dict = {"bvid": "", "lan": "", "lan_doc": "", "tracks": [],
                            "n": 0, "chars": 0, "saved": ""}
         self.account: dict = {"login": False, "uname": "", "mid": 0, "avatar": ""}
+        # AI 巡览：自动挑视频 -> 读字幕 -> 生成待评论任务（文案由外部 AI 回填，本端不接大模型）
+        self.roam: dict = {
+            "enabled": False,
+            "interval": 1800,
+            "max_per_day": 5,
+            "source": "hot",
+            "keywords": [],
+            "stats": {"picked": 0, "waiting": 0, "sent": 0, "skipped": 0,
+                      "failed": 0, "today_sent": 0, "day": "",
+                      "last_run": "", "last_bvid": "", "err": ""},
+            "tasks": [],           # 最近任务概览（不含长文本字幕）
+            "loop": False,         # 后台轮询是否在跑
+        }
+        # 消息收件箱（别人回复我 / @我）：items 为最近一次拉取结果，
+        # replied 为 {msg_id: {text, rpid, ts}}，stats 只做展示用
+        self.inbox: dict = {"items": [], "replied": {},
+                            "stats": {"fetched": 0, "replied": 0,
+                                      "last_fetch": "", "err": ""}}
 
     def note(self, cmd: str, ok: bool, summary: str) -> None:
         with self.lock:
@@ -86,9 +104,39 @@ class Store:
                 "inter": dict(self.inter),
                 "subs": dict(self.subs),
                 "account": dict(self.account),
+                "inbox": self._inbox_snapshot(),
+                "roam": self._roam_snapshot(),
                 "log": list(self.log),
                 "uptime": round(time.time() - self.started_at, 1),
             }
+
+    def _roam_snapshot(self) -> dict:
+        r = self.roam
+        stats = dict(r.get("stats") or {})
+        tasks = []
+        for t in (r.get("tasks") or []):
+            tasks.append({k: t.get(k) for k in
+                          ("task_id", "bvid", "avid", "title", "up", "dur", "play",
+                           "lan", "n_cues", "chars", "excerpt", "status",
+                           "reason", "created_at", "sent_at", "rpid")})
+        return {
+            "enabled": bool(r.get("enabled")),
+            "interval": int(r.get("interval") or 1800),
+            "max_per_day": int(r.get("max_per_day") or 0),
+            "source": r.get("source") or "hot",
+            "keywords": list(r.get("keywords") or []),
+            "stats": stats,
+            "tasks": tasks,
+            "loop": bool(r.get("loop")),
+        }
+
+    def _inbox_snapshot(self) -> dict:
+        b = self.inbox
+        return {
+            "items": [dict(m) for m in (b.get("items") or [])],
+            "replied": {str(k): dict(v) for k, v in (b.get("replied") or {}).items()},
+            "stats": dict(b.get("stats") or {}),
+        }
 
 
 store = Store()

@@ -163,6 +163,84 @@
        background:var(--surface);font-size:12.5px;color:var(--text-2)}
   .cmtbox button:hover{border-color:var(--blue);color:var(--blue-dark);background:var(--blue-soft)}
 
+  /* 评论面板：来源切换（热门/最新/回复我的/@我的） */
+  .cmtsrc{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 14px;
+       border-bottom:1px solid var(--line);flex:none}
+  .cmtsrc button{padding:4px 11px;border:1px solid var(--line);border-radius:var(--r-md);
+       background:var(--surface);font-size:12px;color:var(--text-2)}
+  .cmtsrc button:hover:not(:disabled){border-color:var(--blue);color:var(--blue-dark);background:var(--blue-soft)}
+  .cmtsrc button.cur{color:var(--blue-dark);border-color:#b8e6f7;background:var(--blue-soft)}
+  .cmtsrc button:disabled{opacity:.45;cursor:not-allowed}
+  .wsw{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-2);cursor:pointer;
+       white-space:nowrap}
+  .wsw input[type=checkbox]{width:14px;height:14px;accent-color:var(--blue);cursor:pointer}
+  .wbtn{padding:4px 11px;border:1px solid var(--line);border-radius:var(--r-md);
+       background:var(--surface);font-size:12px;color:var(--text-2);white-space:nowrap}
+  .wbtn:hover:not(:disabled){border-color:var(--blue);color:var(--blue-dark);background:var(--blue-soft)}
+  .wbtn:disabled{opacity:.45;cursor:not-allowed}
+  .wbtn.primary{color:var(--blue-dark);border-color:#b8e6f7;background:var(--blue-soft)}
+  .pane.cur#cmts{display:flex;flex-direction:column;overflow:hidden;min-height:0}
+  #cmtBody{overflow:auto;flex:1;min-height:0}
+  .msg{padding:10px 14px;border-bottom:1px solid var(--line)}
+  .msg:hover{background:var(--surface-2)}
+  .msg .h{display:flex;gap:8px;align-items:baseline;font-size:11.5px;color:var(--dim);flex-wrap:wrap}
+  .msg .h b{color:var(--text-2);font-weight:600;font-size:12.5px}
+  .msg .h .lk{margin-left:auto;color:var(--muted);font-variant-numeric:tabular-nums}
+  .msg .src{margin-top:3px;font-size:11.5px;color:var(--muted)}
+  .msg .m{margin-top:5px;font-size:13px;line-height:1.6;color:var(--text-2);word-break:break-word}
+  .msg .my{margin-top:4px;font-size:12px;color:var(--dim);word-break:break-word}
+  .msg .rd{margin-top:4px;font-size:12px;color:var(--ok);word-break:break-word}
+  .msg .box{display:flex;gap:8px;align-items:flex-end;margin-top:7px}
+  .msg .box textarea{flex:1;resize:vertical;min-height:34px;padding:6px 8px;border-radius:var(--r-md);
+       border:1px solid var(--line);background:var(--surface);color:var(--text);font:inherit;
+       font-size:12.5px;outline:none}
+  .msg .box textarea::placeholder{color:var(--muted)}
+  .msg .box textarea:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(0,174,236,.16)}
+  .st{font-size:10.5px;padding:1px 6px;border-radius:3px;border:1px solid var(--line);
+       background:var(--surface-3);color:var(--dim);line-height:1.7;white-space:nowrap}
+  .st.new{color:var(--warn);border-color:#f0d9a8;background:#fdf7e8}
+  .st.replied{color:var(--ok);border-color:#bfe3d5;background:#f1faf6}
+
+  /* AI 巡览 */
+  .roam{flex:none;border-bottom:1px solid var(--line);background:var(--surface-2)}
+  .roamhd{display:flex;align-items:center;gap:10px;padding:7px 14px}
+  .roamhd .rs{flex:1;min-width:0;font-size:11.5px;color:var(--dim);
+       overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .roamopts{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;padding:0 14px 9px}
+  .roamopts label{display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--dim)}
+  .roamopts input,.roamopts select{height:24px;padding:0 6px;border:1px solid var(--line);
+       border-radius:var(--r-md);background:var(--surface);color:var(--text);font:inherit;
+       font-size:12px;outline:none}
+  .roamopts input:focus,.roamopts select:focus{border-color:var(--blue)}
+  .roamopts input:disabled{opacity:.5}
+  .roamopts input[type=number]{width:66px}
+  .roamopts input#roamKw{width:150px}
+  .roamtasks{max-height:230px;overflow:auto;padding:0 14px 10px;display:flex;
+       flex-direction:column;gap:7px}
+  .rt{border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface);
+       padding:8px 10px}
+  .rt .h{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;
+       color:var(--dim)}
+  .rt .h .bv{color:var(--blue-dark)}
+  .rt .h .lk{margin-left:auto;color:var(--muted);font-variant-numeric:tabular-nums}
+  .rt .bs{font-family:inherit;font-size:10.5px;padding:1px 6px;border-radius:3px;
+       border:1px solid var(--line);background:var(--surface-3);color:var(--dim)}
+  .rt .bs.waiting{color:var(--warn);border-color:#f0d9a8;background:#fdf7e8}
+  .rt .bs.sent{color:var(--ok);border-color:#bfe3d5;background:#f1faf6}
+  .rt .bs.skipped{color:var(--muted);border-color:var(--line);background:var(--surface-3)}
+  .rt .bs.failed{color:var(--err);border-color:#f5c2c4;background:#fdf1f1}
+  .rt .t{margin-top:4px;font-size:12.5px;line-height:1.5;color:var(--text-2);
+       display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .rt .ex{margin-top:4px;font-size:11.5px;line-height:1.5;color:var(--muted);
+       max-height:34px;overflow:hidden}
+  .rt .box{display:flex;flex-direction:column;gap:6px;margin-top:7px}
+  .rt textarea{width:100%;resize:vertical;min-height:36px;padding:6px 8px;
+       border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface);
+       color:var(--text);font:inherit;font-size:12.5px;outline:none}
+  .rt textarea::placeholder{color:var(--muted)}
+  .rt textarea:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(0,174,236,.16)}
+  .rt .btns{display:flex;gap:6px;justify-content:flex-end}
+
   /* 日志 */
   .log{overflow:auto;flex:1;padding:8px 10px;font-family:var(--mono);font-size:11.5px;line-height:1.55}
   .l{display:flex;gap:8px;padding:3px 4px;border-radius:3px}
@@ -259,7 +337,39 @@
       <button class="tab" id="tabSub">字幕</button>
     </div>
     <div class="pane cur" id="list"><div class="empty">等待 search 命令</div></div>
-    <div class="pane" id="cmts"><div class="empty">尚未加载评论</div></div>
+    <div class="pane" id="cmts">
+      <div class="cmtsrc">
+        <button data-src="hot" class="cur">热门</button>
+        <button data-src="new">最新</button>
+        <button data-src="reply">回复我的</button>
+        <button data-src="at">@我的</button>
+        <div class="spacer"></div>
+        <label class="wsw" id="cmtUnWrap" style="display:none"><input type="checkbox" id="cmtUnreplied" checked>只看未回复</label>
+        <button class="wbtn" id="cmtRefresh">刷新</button>
+      </div>
+      <div class="roam" id="roam">
+        <div class="roamhd">
+          <label class="wsw" title="开启后按频率自动挑视频、读字幕、生成待评论任务">
+            <input type="checkbox" id="roamOn">AI 巡览</label>
+          <span class="rs" id="roamSum">—</span>
+          <button class="wbtn" id="roamFold">展开</button>
+        </div>
+        <div class="roamopts" id="roamOpts" style="display:none">
+          <label>频率(分钟)<input type="number" id="roamInt" min="2" step="1" value="30"></label>
+          <label>每日上限<input type="number" id="roamMax" min="0" step="1" value="5"
+            title="0 表示不限"></label>
+          <label>来源<select id="roamSrc">
+            <option value="hot">热门</option><option value="search">关键词</option>
+          </select></label>
+          <label>关键词<input type="text" id="roamKw" placeholder="逗号分隔，如 AI,编程"></label>
+          <button class="wbtn primary" id="roamCheck">立即巡览</button>
+        </div>
+        <div class="roamtasks" id="roamTasks" style="display:none">
+          <div class="empty">暂无巡览任务</div>
+        </div>
+      </div>
+      <div id="cmtBody"><div class="empty">尚未加载评论</div></div>
+    </div>
     <div class="pane" id="subs">
       <div class="subbar">
         <select id="subLang" title="字幕轨"></select>
@@ -480,17 +590,21 @@ function showFolders(items){
 /* ---------- 评论 ---------- */
 function switchTab(t){
   tab = t;
-  [['list','#tabList','#list'],['cmt','#tabCmt','#cmts'],['sub','#tabSub','#subs']].forEach(([k,tid,pid]) => {
+  [['list','#tabList','#list'],['cmt','#tabCmt','#cmts'],
+   ['sub','#tabSub','#subs']].forEach(([k,tid,pid]) => {
     const te = $(tid), pe = $(pid);
     if (te) te.className = 'tab' + (t === k ? ' cur' : '');
     if (pe) pe.className = 'pane' + (t === k ? ' cur' : '');
   });
-  $('#cmtbar').style.display = t === 'cmt' ? 'flex' : 'none';
-  $('#cmtbox').style.display = t === 'cmt' && !!(snap || {}).current ? 'flex' : 'none';
+  syncCmtChrome();
   renderInter(snap || {});
 }
 $('#tabList').onclick = () => switchTab('list');
-$('#tabCmt').onclick = () => { switchTab('cmt'); if (!((snap||{}).comments||[]).length) loadComments(1); };
+$('#tabCmt').onclick = () => {
+  switchTab('cmt');
+  if (isMsgSrc()) loadInbox();
+  else if (!((snap||{}).comments||[]).length) loadComments(1);
+};
 
 async function sendComment(){
   const el = $('#cmtInput');
@@ -520,8 +634,9 @@ $('#cmtPrev').onclick = () => { if (cmtPage > 1) loadComments(cmtPage - 1); };
 $('#cmtNext').onclick = () => loadComments(cmtPage + 1);
 
 function renderComments(s){
+  if (isMsgSrc()) return;                     // 消息来源由 renderInbox 负责
   const list = s.comments || [], meta = s.comments_meta || {};
-  const box = $('#cmts');
+  const box = $('#cmtBody');
   $('#cmtbox').style.display = (tab === 'cmt' && s.current) ? 'flex' : 'none';
   if (!list.length){
     box.innerHTML = '<div class="empty">尚未加载评论</div>';
@@ -628,6 +743,310 @@ $('#subExport').onclick = async () => {
   exportSubs();
 };
 
+/* ---------- 评论来源：热门/最新 + 消息（回复我的 / @我的） ---------- */
+const HMT = ts => { const d = new Date((ts||0)*1000);
+  return String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0') + ' '
+    + String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0'); };
+const BVOF = s => (String(s||'').match(/BV[0-9A-Za-z]{10}/) || [''])[0];
+
+let cmtSrc = 'hot';                 // hot | new | reply | at
+let inboxItems = [], inboxBusy = false;
+
+const isMsgSrc = () => cmtSrc === 'reply' || cmtSrc === 'at';
+
+function syncCmtChrome(){
+  const msg = isMsgSrc();
+  document.querySelectorAll('.cmtsrc [data-src]').forEach(b => {
+    b.className = b.dataset.src === cmtSrc ? 'cur' : '';
+  });
+  $('#cmtUnWrap').style.display = msg ? 'inline-flex' : 'none';
+  $('#cmtbar').style.display = (msg || tab !== 'cmt') ? 'none' : 'flex';
+  $('#cmtbox').style.display = (!msg && tab === 'cmt' && !!(snap || {}).current) ? 'flex' : 'none';
+}
+
+function setSrc(k){
+  cmtSrc = k;
+  syncCmtChrome();
+  if (isMsgSrc()) loadInbox(); else loadComments(1);
+}
+document.querySelectorAll('.cmtsrc [data-src]').forEach(b => {
+  b.onclick = () => setSrc(b.dataset.src);
+});
+$('#cmtUnreplied').onchange = () => { if (isMsgSrc()) loadInbox(); };
+$('#cmtRefresh').onclick = () => { isMsgSrc() ? loadInbox() : loadComments(cmtPage); };
+
+async function loadInbox(){
+  if (inboxBusy) return;
+  inboxBusy = true;
+  const btn = $('#cmtRefresh');
+  btn.disabled = true; btn.textContent = '拉取中…';
+  try {
+    const kind = cmtSrc === 'at' ? 'at' : cmtSrc === 'reply' ? 'reply' : 'all';
+    const un = $('#cmtUnreplied').checked ? 1 : 0;
+    const j = await api(`/api/inbox?kind=${kind}&only_unreplied=${un}&limit=50`);
+    if (!j.ok){
+      toast(j.msg || '拉取消息失败', true);
+      if (j.need_login) openQr();
+    } else {
+      inboxItems = j.items || [];
+      if (!inboxItems.length && !un) inboxItems = [];
+    }
+  } finally {
+    inboxBusy = false; btn.disabled = false; btn.textContent = '刷新';
+  }
+  renderInbox();
+}
+
+function renderInbox(){
+  const box = $('#cmtBody');
+  if (!inboxItems.length){
+    box.innerHTML = '<div class="empty">没有消息 · 这里只显示别人回复我 / @我的评论</div>';
+    return;
+  }
+  box.innerHTML = inboxItems.map(m => {
+    const st = m.status === 'replied' ? 'replied' : 'new';
+    const bv = BVOF(m.uri);
+    const src = m.type === 1 ? ('视频 ' + bv) : m.type === 12 ? '文章' : '动态';
+    const title = (m.title || '').slice(0, 52);
+    const mid = String(m.msg_id || '');
+    return `
+    <div class="msg">
+      <div class="h"><b>${esc(m.uname || '匿名')}</b><span>mid ${esc(String(m.mid || 0))}</span>
+        <span class="st ${st}">${st === 'replied' ? '已回复' : '未回复'}</span>
+        <span class="lk">${m.kind === 'at' ? '@我' : '回复我'} · ${HMT(m.ts)}</span></div>
+      <div class="src">${esc(src)}${title ? ' · ' + esc(title) : ''}</div>
+      <div class="m">${esc(m.his_msg || '(对方内容为空)')}</div>
+      ${m.my_msg ? `<div class="my">我原评论：${esc(m.my_msg)}</div>` : ''}
+      ${st === 'replied' && m.replied_text ? `<div class="rd">已回：${esc(m.replied_text)}</div>` : ''}
+      <div class="box">
+        <textarea rows="1" data-in="${esc(mid)}" placeholder="手动回一句（内容由你写，直接发到评论区）"></textarea>
+        <button class="wbtn primary" data-send="${esc(mid)}">回复</button>
+      </div>
+    </div>`;
+  }).join('');
+  box.querySelectorAll('[data-send]').forEach(b => {
+    b.onclick = () => sendReply(b.dataset.send,
+      box.querySelector(`[data-in="${b.dataset.send}"]`), b);
+  });
+}
+
+async function sendReply(msgId, ta, btn){
+  const text = (ta.value || '').trim();
+  if (!text) return toast('回复内容不能为空', true);
+  if (!confirm('确认把这条内容作为评论回复发出？\n\n' + text)) return;
+  btn.disabled = true; btn.textContent = '发送中…';
+  try {
+    const j = await api('/api/reply', {msg_id: msgId, message: text});
+    if (!j.ok){
+      toast(j.msg || '发送失败', true);
+      if (j.need_login) openQr();
+      return;
+    }
+    toast('已回复');
+    ta.value = '';
+    await loadInbox();
+  } finally {
+    btn.disabled = false; btn.textContent = '回复';
+  }
+}
+
+/* ---------- AI 巡览 ---------- */
+let roamOpen = false, roamSig = '', roamDraft = {}, roamBusy = false;
+const RSTAT = {waiting:'待评论', sent:'已发布', skipped:'已跳过', failed:'失败'};
+
+function roamCap(r){ return r.max_per_day ? '/' + r.max_per_day : '(不限)'; }
+
+function roamSummary(r){
+  const s = r.stats || {};
+  const mins = Math.max(2, Math.round((r.interval || 1800) / 60));
+  return `${r.enabled ? '开' : '关'} · 每 ${mins} 分 · 今日 ${s.today_sent||0}${roamCap(r)}`
+    + ` · 待评 ${s.waiting||0} · 已发 ${s.sent||0} · 跳过 ${s.skipped||0}`
+    + ` · 来源 ${r.source==='search' ? '关键词' : '热门'}`
+    + (r.loop ? ' · loop on' : '');
+}
+
+function renderRoam(r){
+  r = r || {};
+  $('#roamSum').textContent = roamSummary(r);
+  const chk = $('#roamOn');
+  if (document.activeElement !== chk) chk.checked = !!r.enabled;
+  const setVal = (sel, v) => {
+    const el = $(sel);
+    if (el && document.activeElement !== el) el.value = v;
+  };
+  setVal('#roamInt', Math.max(2, Math.round((r.interval || 1800) / 60)));
+  setVal('#roamMax', r.max_per_day || 0);
+  setVal('#roamSrc', r.source || 'hot');
+  setVal('#roamKw', (r.keywords || []).join(','));
+  $('#roamKw').disabled = ($('#roamSrc').value || 'hot') !== 'search';
+  if (!roamOpen) return;
+  renderRoamTasks(r.tasks || []);
+}
+
+function renderRoamTasks(tasks){
+  const box = $('#roamTasks');
+  const typing = document.activeElement && document.activeElement.tagName === 'TEXTAREA'
+                 && box.contains(document.activeElement);
+  if (typing) return;                        // 正在输入时不重建 DOM，避免丢草稿
+  const sig = JSON.stringify(tasks.map(t => [t.task_id, t.status, t.reason,
+                                             t.n_cues, t.chars]));
+  if (sig === roamSig) return;
+  roamSig = sig;
+  if (!tasks.length){
+    box.innerHTML = '<div class="empty">暂无巡览任务 · 点「立即巡览」跑一轮</div>';
+    return;
+  }
+  box.innerHTML = tasks.map(t => {
+    const st = t.status || 'waiting';
+    const draft = roamDraft[t.task_id] || '';
+    const ex = (t.excerpt || '').slice(0, 180);
+    return `
+      <div class="rt">
+        <div class="h"><span class="bv">${esc(t.bvid)}</span>
+          <span class="bs ${st}">${RSTAT[st] || st}</span>
+          <span class="lk">${t.n_cues||0} 句 · ${t.chars||0} 字${t.lan ? ' · '+esc(t.lan) : ''}</span></div>
+        <div class="t">${esc(t.title || '')}</div>
+        ${ex ? `<div class="ex">${esc(ex)}</div>` : ''}
+        ${t.reason ? `<div class="ex">原因：${esc(t.reason)}</div>` : ''}
+        ${st === 'waiting' ? `
+        <div class="box">
+          <textarea rows="2" maxlength="1000" data-draft="${esc(t.task_id)}"
+            placeholder="写评论；或先「复制字幕」交给外部 AI，写完贴回这里">${esc(draft)}</textarea>
+          <div class="btns">
+            <button class="wbtn" data-copy="${esc(t.task_id)}">复制字幕</button>
+            <button class="wbtn" data-skip="${esc(t.task_id)}">跳过</button>
+            <button class="wbtn primary" data-send="${esc(t.task_id)}">写评论并发送</button>
+          </div>
+        </div>` : ''}
+      </div>`;
+  }).join('');
+  box.querySelectorAll('[data-draft]').forEach(el => {
+    el.oninput = () => { roamDraft[el.dataset.draft] = el.value; };
+  });
+  box.querySelectorAll('[data-copy]').forEach(b => {
+    b.onclick = () => copyRoamText(b.dataset.copy, b);
+  });
+  box.querySelectorAll('[data-skip]').forEach(b => {
+    b.onclick = () => skipRoam(b.dataset.skip, b);
+  });
+  box.querySelectorAll('[data-send]').forEach(b => {
+    b.onclick = () => sendRoam(b.dataset.send, b);
+  });
+}
+
+async function copyText(t){
+  try { await navigator.clipboard.writeText(t); return; } catch (e) { /* 降级 */ }
+  const ta = document.createElement('textarea');
+  ta.value = t;
+  document.body.appendChild(ta);
+  ta.select();
+  document.execCommand('copy');
+  ta.remove();
+}
+
+async function copyRoamText(taskId, btn){
+  btn.disabled = true; btn.textContent = '读取中…';
+  try {
+    const j = await api('/api/roam/next', {task_id: taskId});
+    if (!j.ok) return toast(j.msg || '读取字幕失败', true);
+    const t = j.task || {};
+    const txt = t.text_head || t.excerpt || '';
+    if (!txt) return toast('该任务字幕正文为空', true);
+    await copyText(txt);
+    toast(`字幕已复制（${txt.length} 字）`);
+  } finally {
+    btn.disabled = false; btn.textContent = '复制字幕';
+  }
+}
+
+async function sendRoam(taskId, btn){
+  const ta = document.querySelector('[data-draft="' + taskId + '"]');
+  const text = ((ta && ta.value) || roamDraft[taskId] || '').trim();
+  if (!text) return toast('先写下评论内容', true);
+  if (!confirm('确认把这条评论发到 ' + taskId + ' 对应视频？\n\n' + text)) return;
+  btn.disabled = true; btn.textContent = '发送中…';
+  try {
+    const j = await api('/api/roam/comment', {task_id: taskId, message: text});
+    if (!j.ok) return toast(j.msg || '发送失败', true);
+    toast((j.msg || '已发布').split('\n')[0]);
+    delete roamDraft[taskId];
+    roamSig = '';
+    renderRoam(j.roam || {});
+  } finally {
+    btn.disabled = false; btn.textContent = '写评论并发送';
+  }
+}
+
+async function skipRoam(taskId, btn){
+  btn.disabled = true;
+  try {
+    const j = await api('/api/roam/skip', {task_id: taskId});
+    toast(j.ok ? '已跳过' : (j.msg || '跳过失败'), !j.ok);
+    delete roamDraft[taskId];
+    roamSig = '';
+    renderRoam(j.roam || {});
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function saveRoam(body, okMsg){
+  const j = await api('/api/roam/set', body);
+  if (!j.ok) toast((j.out || j.msg || '设置失败').split('\n')[0], true);
+  else if (okMsg) toast(okMsg);
+  if (j.roam){ roamSig = ''; renderRoam(j.roam); }
+  return j;
+}
+
+$('#roamOn').onchange = () => {
+  const on = $('#roamOn').checked;
+  saveRoam({enabled: on}, on ? '巡览已开启' : '巡览已关闭');
+};
+$('#roamInt').onchange = () => {
+  const m = Math.max(2, parseFloat($('#roamInt').value) || 30);
+  $('#roamInt').value = m;
+  saveRoam({interval_min: m}, '频率已设为每 ' + m + ' 分钟');
+};
+$('#roamMax').onchange = () => {
+  const n = Math.max(0, parseInt($('#roamMax').value, 10) || 0);
+  $('#roamMax').value = n;
+  saveRoam({max_per_day: n}, n ? '每日上限 ' + n + ' 条' : '每日不限');
+};
+$('#roamSrc').onchange = () => {
+  const src = $('#roamSrc').value;
+  $('#roamKw').disabled = src !== 'search';
+  saveRoam({source: src}, src === 'search' ? '来源：关键词' : '来源：热门');
+};
+$('#roamKw').onchange = () => {
+  saveRoam({keyword: $('#roamKw').value}, '关键词已保存');
+};
+$('#roamCheck').onclick = async () => {
+  if (roamBusy) return;
+  roamBusy = true;
+  const b = $('#roamCheck');
+  b.disabled = true; b.textContent = '巡览中…';
+  try {
+    const j = await api('/api/roam/check', {});
+    const r = j.result || {};
+    if (!j.ok) toast('巡览出错：' + (r.err || '未知'), true);
+    else toast(`tried=${r.tried||0} 取到=${r.picked||0} 跳过=${r.skipped||0}`);
+    roamSig = '';
+    renderRoam(j.roam || {});
+    if (!roamOpen){ roamOpen = true; syncRoamFold(); }
+  } finally {
+    roamBusy = false;
+    b.disabled = false; b.textContent = '立即巡览';
+  }
+};
+$('#roamFold').onclick = () => { roamOpen = !roamOpen; syncRoamFold(); };
+
+function syncRoamFold(){
+  $('#roamOpts').style.display = roamOpen ? 'flex' : 'none';
+  $('#roamTasks').style.display = roamOpen ? 'flex' : 'none';
+  $('#roamFold').textContent = roamOpen ? '收起' : '展开';
+  if (roamOpen && snap) renderRoam(snap.roam || {});
+}
+
 /* ---------- 主渲染 ---------- */
 function render(s){
   const p = s.player || {}, c = s.current;
@@ -679,6 +1098,8 @@ function render(s){
 
   renderComments(s);
   renderInter(s);
+  renderRoam(s.roam || {});
+  if (isMsgSrc() && tab === 'cmt' && inboxItems.length) renderInbox();
 
   const log = s.log || [];
   $('#log').innerHTML = log.length ? log.map(l =>

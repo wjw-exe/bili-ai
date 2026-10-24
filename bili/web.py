@@ -25,7 +25,8 @@ _BLANK_PNG = base64.b64decode(
 )
 ALLOWED = {"search", "open_video", "play", "pause", "resume", "seek", "state", "status",
            "comments", "comment", "like", "coin", "fav", "unfav", "folders", "me",
-           "subtitles", "subtitle"}
+           "subtitles", "subtitle", "inbox", "reply",
+           "roam", "roam_list", "roam_check", "roam_next", "roam_comment", "roam_skip"}
 
 # 后台专用 Core：独立 Bili 实例（自己的 httpx client，绑定 uvicorn 的事件循环），
 # 与 MCP 主 loop 的 core 互不干扰；两者共用同一个 store，状态互通。
@@ -50,6 +51,25 @@ def _set_account(info: dict) -> None:
                          "uname": info.get("uname") or "",
                          "mid": info.get("mid") or 0,
                          "avatar": info.get("avatar") or ""}
+
+
+def _web_roam():
+    """后台专用巡览器：与 web_core 绑定，状态与 CLI / MCP 共用 .data/roam.json"""
+    from .roam import get_roam
+
+    return get_roam(web_core)
+
+
+@app.on_event("startup")
+async def _startup() -> None:
+    """起后台巡览轮询（幂等：重复 startup 不会起第二个 loop）"""
+    from .roam import start_loop
+
+    try:
+        start_loop(_web_roam())
+        _web_roam()._sync()
+    except Exception:                            # noqa: BLE001  轮询失败不影响后台可用
+        pass
 
 
 @app.get("/")
@@ -91,6 +111,53 @@ async def api_cmd(request: Request) -> dict:
     # 而人点的按钮必须能立刻生效，故不套用 core.readonly。
     out = await web_core.execute(name, body.get("args") or {})
     return {"ok": not out.startswith(("ERR", "BAD", "HTTP", "NETWORK", "Runtime")), "out": out}
+
+
+# ---------------- 消息收件箱（回复我的 / @我的） ----------------
+
+async def _body(request: Request) -> dict:
+    try:
+        body = await request.json()
+    except Exception:                            # noqa: BLE001
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
+def _inbox_snap() -> dict:
+    with store.lock:
+        snap = store._inbox_snapshot()
+    snap["login"] = bool(web_core.bili.logged_in)
+    snap["mid"] = int(web_core.bili.mid or 0)
+    return snap
+
+
+@app.get("/api/inbox")
+async def api_inbox(kind: str = "all", only_unreplied: bool = False,
+                    limit: int = 50) -> dict:
+    """拉取别人回复我 / @我的消息；只做检测，不发送任何东西"""
+    try:
+        items = await web_core.inbox.list(kind, only_unreplied, limit)
+    except NeedLogin as e:
+        return {"ok": False, "need_login": True, "msg": e.msg, **_inbox_snap()}
+    except Exception as e:                       # noqa: BLE001
+        return {"ok": False, "msg": f"{type(e).__name__}: {e}", **_inbox_snap()}
+    return {"ok": True, **_inbox_snap(), "kind": kind,
+            "only_unreplied": bool(only_unreplied), "items": items}
+
+
+@app.post("/api/reply")
+async def api_reply(request: Request) -> dict:
+    """后台手动补发：把输入框里的文案作为评论回复发出"""
+    b = await _body(request)
+    msg_id = str(b.get("msg_id") or "").strip()
+    text = str(b.get("message") or "").strip()
+    if not msg_id:
+        return {"ok": False, "msg": "BAD_ARGS: 缺少 msg_id"}
+    if not text:
+        return {"ok": False, "msg": "ERR_NEED_TEXT: 回复内容不能为空"}
+    out = await web_core.execute("reply", {"msg_id": msg_id, "message": text})
+    ok = out.startswith("ok")
+    return {"ok": ok, "out": out, "msg": "" if ok else out, **_inbox_snap()}
 
 
 # ---------------- 登录（后台扫码） ----------------
@@ -164,6 +231,86 @@ async def api_folders() -> dict:
         return {"ok": False, "need_login": True, "msg": e.msg}
     except Exception as e:                       # noqa: BLE001
         return {"ok": False, "msg": f"{type(e).__name__}: {e}"}
+
+
+# ---------------- AI 巡览 ----------------
+
+@app.get("/api/roam")
+async def api_roam() -> dict:
+    r = _web_roam()
+    r._sync()
+    with store.lock:
+        roam = dict(store.roam)
+    return {"ok": True, "roam": roam, "text": r.status_text()}
+
+
+@app.post("/api/roam/set")
+async def api_roam_set(request: Request) -> dict:
+    try:
+        body = await request.json()
+    except Exception:                            # noqa: BLE001
+        return {"ok": False, "msg": "BAD_BODY"}
+    r = _web_roam()
+    enabled = body.get("enabled")
+    interval = body.get("interval", 0)
+    if not interval and body.get("interval_min"):
+        try:
+            interval = int(float(body["interval_min"]) * 60)
+        except (TypeError, ValueError):
+            interval = 0
+    try:
+        max_per_day = int(body.get("max_per_day", -1))
+    except (TypeError, ValueError):
+        max_per_day = -1
+    out = r.configure(on=enabled, interval=interval, max_per_day=max_per_day,
+                      source=str(body.get("source") or ""),
+                      keyword=str(body.get("keyword") or ""))
+    return {"ok": not out.startswith("ERR"), "out": out,
+            "roam": store.snapshot().get("roam")}
+
+
+@app.post("/api/roam/check")
+async def api_roam_check() -> dict:
+    r = _web_roam()
+    s = await r.check(1, force=True)
+    return {"ok": not s["err"], "result": s,
+            "roam": store.snapshot().get("roam")}
+
+
+@app.post("/api/roam/next")
+async def api_roam_next(request: Request) -> dict:
+    try:
+        body = await request.json()
+    except Exception:                            # noqa: BLE001
+        body = {}
+    t = _web_roam().take_next(str(body.get("task_id") or ""))
+    if not t:
+        return {"ok": False, "msg": "没有 waiting 任务"}
+    return {"ok": True, "task": t}
+
+
+@app.post("/api/roam/comment")
+async def api_roam_comment(request: Request) -> dict:
+    try:
+        body = await request.json()
+    except Exception:                            # noqa: BLE001
+        return {"ok": False, "msg": "BAD_BODY"}
+    r = _web_roam()
+    res = await r.publish(str(body.get("task_id") or ""),
+                          str(body.get("message") or ""))
+    return {"ok": bool(res.get("ok")), "msg": res.get("msg"),
+            "roam": store.snapshot().get("roam")}
+
+
+@app.post("/api/roam/skip")
+async def api_roam_skip(request: Request) -> dict:
+    try:
+        body = await request.json()
+    except Exception:                            # noqa: BLE001
+        return {"ok": False, "msg": "BAD_BODY"}
+    out = _web_roam().skip(str(body.get("task_id") or ""))
+    return {"ok": not out.startswith("ERR"), "msg": out,
+            "roam": store.snapshot().get("roam")}
 
 
 @app.get("/api/thumb")

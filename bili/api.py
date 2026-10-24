@@ -1,6 +1,7 @@
 """B 站接口封装：wbi 密钥缓存 + 搜索 + 详情"""
 
 import asyncio
+import re
 import time
 from urllib.parse import quote, urlencode
 
@@ -9,11 +10,27 @@ from .fmt import clean
 from .http import WEB, Api, ApiError, NeedLogin, RiskControl
 
 API = "https://api.bilibili.com"
+MSG = f"{API}/x/msgfeed"
+MSGREF = "https://message.bilibili.com/"
+
+# business_id -> 评论对象 type（1 视频 / 12 文章 / 17 动态）
+# 其它值（直播、课程等）oid 语义不同，发评论接口对不上，直接跳过
+BIZ2TYPE = {1: 1, 12: 12, 17: 17}
+
+# 「回复 @某某 :」前缀，归一化时剥掉，只留对方原话
+_AT_PREFIX = re.compile(r"^\s*回复\s*@[^\s:：]+\s*[:：]\s*")
 
 
 def _abs(u: str) -> str:
     """B 站图床返回协议相对地址（//i0.hdslb.com/...），统一补全 scheme"""
     return "https:" + u if u.startswith("//") else u
+
+
+def _strip_at(s: str) -> str:
+    """去掉「回复 @nickname :」前缀并压缩空白"""
+    t = " ".join(str(s or "").split())
+    m = _AT_PREFIX.match(t)
+    return t[m.end():].strip() if m else t
 
 
 class Bili:
@@ -68,6 +85,39 @@ class Bili:
             })
         return {"query": keyword, "page": page,
                 "total": data.get("numResults") or 0, "items": items}
+
+    async def hot_videos(self, limit: int = 20) -> list[dict]:
+        """综合热门列表（巡览取片用）。GET /x/web-interface/popular，pn=1&ps=limit。
+
+        该接口不区分 BV/AV，返回的 duration 为秒数；desc 只留前 120 字，
+        避免把整段简介灌给调用方。
+        """
+        n = max(1, min(50, int(limit or 20)))
+        params = {"pn": 1, "ps": n}
+        try:
+            v = await self.http.get_json(f"{API}/x/web-interface/popular", params, WEB)
+        except RiskControl:
+            self.http.drop_buvid()
+            await asyncio.sleep(6)
+            await self.warmup()
+            v = await self.http.get_json(f"{API}/x/web-interface/popular", params, WEB)
+
+        data = v.get("data") or {}
+        out = []
+        for r in (data.get("list") or [])[:n]:
+            owner = r.get("owner") or {}
+            stat = r.get("stat") or {}
+            out.append({
+                "bvid": r.get("bvid") or "",
+                "title": clean(r.get("title") or ""),
+                "up": owner.get("name") or "",
+                "mid": owner.get("mid") or 0,
+                "dur": int(r.get("duration") or 0),
+                "play": stat.get("view") or 0,
+                "desc": " ".join((r.get("desc") or "").split())[:120],
+                "pic": _abs(r.get("pic") or ""),
+            })
+        return out
 
     async def view(self, bvid: str) -> dict:
         referer = f"https://www.bilibili.com/video/{bvid}"
@@ -235,9 +285,86 @@ class Bili:
                 "total": cur.get("all_count") or 0,
                 "is_end": bool(cur.get("is_end")), "items": items[:ps]}
 
+    async def comments_replies(self, aid: int, bvid: str, root: int | str,
+                               page: int = 1, limit: int = 20) -> dict:
+        """读某条主楼评论下的子回复（含楼中楼，展平为一层）。
+
+        实测（2026-10）：登录态下无需 wbi 签名；data.replies[] 为直接子回复，
+        每条可能再带 sub_replies[]，这里一并展平并保留 parent 便于精确回复。
+        """
+        ps = max(1, min(20, int(limit)))
+        params = {"oid": int(aid), "type": 1, "root": int(root),
+                  "pn": max(1, int(page)), "ps": ps}
+        v = await self.http.get_json(f"{API}/x/v2/reply/reply", params,
+                                     self._video_ref(bvid))
+        data = v.get("data") or {}
+        pg = data.get("page") or {}
+        rows = list(data.get("replies") or [])
+        items, seen = [], set()
+        for r in rows:
+            for x in [r] + list(r.get("sub_replies") or []):
+                rpid = str(x.get("rpid_str") or x.get("rpid") or "")
+                if not rpid or rpid in seen:
+                    continue
+                seen.add(rpid)
+                mem = x.get("member") or {}
+                items.append({
+                    "rpid": rpid,
+                    "root": str(x.get("root_str") or x.get("root") or root),
+                    "parent": str(x.get("parent_str") or x.get("parent") or ""),
+                    "mid": mem.get("mid") or 0,
+                    "uname": mem.get("uname") or "",
+                    "msg": " ".join(clean((x.get("content") or {}).get("message") or "").split()),
+                    "ctime": x.get("ctime") or 0,
+                })
+        total = int(pg.get("count") or 0)
+        num = int(pg.get("num") or page)
+        size = int(pg.get("size") or ps)
+        is_end = (not rows) or len(rows) < ps or bool(total and num * size >= total)
+        return {"root": str(root), "page": page, "is_end": bool(is_end),
+                "total": total, "items": items}
+
+    async def find_my_comments(self, aid: int, bvid: str, pages: int = 3,
+                               limit: int = 20) -> list[dict]:
+        """扫主楼评论找我自己发的评论。
+
+        /x/v2/reply/member 已 404，只能翻 /x/v2/reply/wbi/main 主楼按
+        member.mid == self.mid 匹配；命中后停止翻页。
+        """
+        me = int(self.mid or 0)
+        if not me:
+            raise NeedLogin("未登录：无法定位自己的评论")
+        out, seen = [], set()
+        pages = max(1, min(20, int(pages)))
+        for p in range(1, pages + 1):
+            r = await self.comments(aid, bvid, p, limit, 3)
+            for it in r["items"]:
+                if int(it.get("mid") or 0) != me:
+                    continue
+                if it["rpid"] in seen:
+                    continue
+                seen.add(it["rpid"])
+                out.append({"rpid": it["rpid"], "msg": it["msg"],
+                            "sub": it["sub"], "ctime": it["ctime"]})
+            if r["is_end"]:
+                break
+        return out
+
+    def _comment_ref(self, ctype: int, oid: int, bvid: str = "") -> str:
+        """按评论对象类型给 Referer：视频用 bvid，文章用 cv，动态用 t.bilibili"""
+        if ctype == 12:
+            return f"https://www.bilibili.com/read/cv{oid}"
+        if ctype == 17:
+            return f"https://t.bilibili.com/{oid}"
+        if bvid:
+            return self._video_ref(bvid)
+        return WEB
+
     async def comment_add(self, aid: int, bvid: str, message: str,
-                          root: int | str = 0, parent: int | str = 0) -> dict:
-        """发表评论。root/parent 非 0 时是对某条评论的回复。
+                          root: int | str = 0, parent: int | str = 0,
+                          type: int = 1) -> dict:
+        """发表评论。type 为评论对象类型（1 视频 / 12 文章 / 17 动态），默认视频。
+        root/parent 非 0 时是对某条评论的回复。
 
         写接口：需登录态 + csrf(bili_jct)，未登录 http 层直接抛 NeedLogin。
         """
@@ -246,18 +373,72 @@ class Bili:
             raise ValueError("评论内容不能为空")
         if len(msg) > 1000:
             raise ValueError("评论内容超过 1000 字上限")
-        payload = {"oid": aid, "type": 1, "message": msg, "plat": 1}
+        ctype = int(type or 1)
+        payload = {"oid": aid, "type": ctype, "message": msg, "plat": 1}
         if root:
             payload["root"] = root
             payload["parent"] = parent or root
         # x/v2/reply/add 需 wbi 签名，缺失时服务端直接回 404/412
-        params = sign.sign_params({"oid": aid, "type": 1}, await self.mixin_key())
+        params = sign.sign_params({"oid": aid, "type": ctype}, await self.mixin_key())
         url = f"{API}/x/v2/reply/add?" + urlencode(params)
-        v = await self.http.post_json(url, payload, self._video_ref(bvid))
+        v = await self.http.post_json(url, payload, self._comment_ref(ctype, aid, bvid))
         d = v.get("data") or {}
-        return {"aid": aid, "bvid": bvid,
+        return {"aid": aid, "bvid": bvid, "oid": aid, "type": ctype,
                 "rpid": str(d.get("rpid_str") or d.get("rpid") or ""),
                 "message": msg}
+
+    # ---------------- 消息（回复我的 / @我的） ----------------
+
+    async def _msgfeed(self, kind: str) -> list[dict]:
+        """拉 msgfeed 原始条目。kind: reply | at。需登录态。"""
+        path = "at" if str(kind).lower() == "at" else "reply"
+        v = await self.http.get_json(
+            f"{MSG}/{path}",
+            {"platform": "web", "build": 0, "mobi_app": "web"}, MSGREF)
+        return list((v.get("data") or {}).get("items") or [])
+
+    @staticmethod
+    def _norm_msg(row: dict, kind: str) -> dict | None:
+        """归一化一条消息；business_id 不在映射表里（系统通知等）返回 None"""
+        it = row.get("item") or {}
+        u = row.get("user") or {}
+        try:
+            ctype = BIZ2TYPE.get(int(it.get("business_id") or 0))
+        except (TypeError, ValueError):
+            ctype = None
+        oid = int(it.get("subject_id") or 0)
+        if not ctype or not oid:
+            return None
+        root = int(it.get("root_id") or 0) or int(it.get("source_id") or 0)
+        parent = int(it.get("source_id") or 0) or root
+        title = (clean(it.get("title") or "") or clean(it.get("detail_title") or "")
+                 or str(it.get("desc") or ""))
+        return {
+            "msg_id": str(row.get("id") or ""),
+            "kind": kind,
+            "mid": int(u.get("mid") or 0),
+            "uname": u.get("nickname") or "",
+            "avatar": _abs(u.get("avatar") or ""),
+            "oid": oid,
+            "type": ctype,
+            "root": root,
+            "parent": parent,
+            "uri": it.get("uri") or "",
+            "title": " ".join(str(title).split())[:120],
+            "his_msg": _strip_at(it.get("source_content") or "")[:500],
+            "my_msg": _strip_at(it.get("target_reply_content") or "")[:500],
+            "ts": int(row.get("reply_time") or row.get("at_time") or 0),
+        }
+
+    async def msg_replies(self) -> list[dict]:
+        """别人回复我（含回复我的评论）的消息列表，已归一化"""
+        return [m for m in (self._norm_msg(r, "reply")
+                            for r in await self._msgfeed("reply")) if m]
+
+    async def msg_ats(self) -> list[dict]:
+        """别人 @我 的消息列表，已归一化"""
+        return [m for m in (self._norm_msg(r, "at")
+                            for r in await self._msgfeed("at")) if m]
 
     # ---------------- 互动 ----------------
 
