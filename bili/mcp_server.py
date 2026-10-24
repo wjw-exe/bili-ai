@@ -218,6 +218,40 @@ async def roam_status() -> str:
     return core.roam.status_text() + "\n" + core.roam.list_text("", 10)
 
 
+@mcp.tool()
+async def upload_zones(top: int = 0) -> str:
+    """列出投稿分区（父分区 -> tid 子分区），用于给 upload_video 选 tid。需要登录态。"""
+    await core.bili.warmup()
+    return await core.execute("upload_zones", {"top": top})
+
+
+@mcp.tool()
+async def upload_video(file: str, title: str, tid: int, desc: str = "",
+                       tags: str = "", cover: str = "", copyright: int = 1,
+                       source: str = "", tid_v2: int = 0,
+                       confirm: bool = False) -> str:
+    """把一个本地视频文件投稿到 B 站（上传 + 提交审核，会公开发布、不可撤回）。
+
+    file 为本地视频绝对路径；title ≤80 字；tid 用 upload_zones 查；
+    tags 逗号分隔；cover 为封面图片路径（可空）；copyright 1=自制 2=转载（2 必须给 source）。
+    confirm=False（默认）只做本地预检并返回投稿计划，不消耗任何上传流量；
+    confirm=True 才会真实上传并提交审核。需要登录态。
+    tid_v2 一般留 0：新版分区会用到，缺了会自动反查一次。"""
+    await core.bili.warmup()
+    return await core.execute("upload",
+                              {"file": file, "title": title, "tid": tid, "desc": desc,
+                               "tag": tags, "cover": cover, "copyright": copyright,
+                               "source": source, "tid_v2": tid_v2,
+                               "confirm": confirm})
+
+
+@mcp.tool()
+async def upload_list(pn: int = 1, ps: int = 10) -> str:
+    """列出我的稿件与审核状态（state_desc），用于确认 upload_video 是否过审。需要登录态。"""
+    await core.bili.warmup()
+    return await core.execute("upload_list", {"pn": pn, "ps": ps})
+
+
 def run() -> None:
     """stdio 传输启动。1.x / 2.x 的 run 签名不同，按可用形式调用。"""
     try:

@@ -440,6 +440,121 @@ class Core:
             store.inter = {"liked": like["liked"], "coins": coin["coins"],
                            "favoured": fav["favoured"]}
 
+    # ---------------- 投稿（发视频） ----------------
+
+    @staticmethod
+    def _int(v, default: int = 0) -> int:
+        """CLI 传进来的数字都是字符串，统一收口，非法值回 default"""
+        if isinstance(v, bool):
+            return int(v)
+        try:
+            return int(str(v).strip() or default)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _tag_list(tag) -> list[str]:
+        if isinstance(tag, (list, tuple)):
+            raw = [str(t) for t in tag]
+        else:
+            raw = str(tag or "").replace("，", ",").split(",")
+        out = []
+        for t in raw:
+            t = t.strip()
+            if t and t not in out:
+                out.append(t)
+        return out
+
+    async def cmd_upload(self, file: str = "", title: str = "", tid=0,
+                         desc: str = "", tag="", cover: str = "",
+                         copyright=1, source: str = "", dynamic: str = "",
+                         no_reprint=1, threads=3, dtime=0, tid_v2=0,
+                         confirm: bool = False) -> str:
+        """投稿视频。默认 dry-run 只做本地预检；confirm=True 才真实上传+提交审核。"""
+        from . import upload as up
+
+        meta = up.scan(file)
+        tid_i = self._int(tid)
+        tags = self._tag_list(tag)
+        if not str(title or "").strip():
+            return "ERR_TITLE: 缺少 title（稿件标题，≤80 字）"
+        if len(str(title).strip()) > 80:
+            return f"ERR_TITLE: 标题 {len(str(title).strip())} 字，超过 80 字上限"
+        if len(str(desc or "")) > 2000:
+            return f"ERR_DESC: 简介 {len(str(desc))} 字，超过 2000 字上限"
+        if len(tags) > 10:
+            return f"ERR_TAG: 标签 {len(tags)} 个，超过 10 个上限"
+        if any(len(t) > 20 for t in tags):
+            return "ERR_TAG: 单个标签超过 20 字"
+        if not tid_i:
+            return "ERR_TID: 缺少分区 tid，用 upload_zones 查"
+        copyright_i = 2 if self._int(copyright, 1) == 2 else 1
+        if copyright_i == 2 and not str(source or "").strip():
+            return "ERR_SOURCE: 转载（copyright=2）必须给 source 原视频地址"
+
+        plan = [
+            f"plan upload{' (dry-run，未上传任何字节)' if not confirm else ''}",
+            f"file: {meta['name']}  {meta['mb']}",
+            f"title: {title}  ({len(title)}字)",
+            f"tid: {tid_i}   copyright: {copyright_i}"
+            f"{'（自制）' if copyright_i == 1 else '（转载 ' + str(source) + '）'}",
+            f"tag: {','.join(tags) or '-'}",
+            f"cover: {cover or '-'}   desc: {(desc or '-')[:60]}",
+        ]
+        if self._int(tid_v2):
+            plan[3] = plan[3] + f"   tid_v2={self._int(tid_v2)}"
+        if not confirm:
+            plan.append("提示: 未提交。加 --confirm（MCP: confirm=true）才会真实上传并投稿，"
+                        "投稿公开可见、不可撤回")
+            return "\n".join(plan)
+
+        r = await up.publish(self.bili.http, path=meta["path"], title=title,
+                             tid=tid_i, desc=desc, tags=tags,
+                             cover=str(cover or ""), copyright=copyright_i,
+                             tid_v2=self._int(tid_v2) or None,
+                             source=str(source or ""), dynamic=str(dynamic or ""),
+                             no_reprint=self._int(no_reprint, 1),
+                             threads=self._int(threads, 3) or 3,
+                             dtime=self._int(dtime) or None)
+        with store.lock:
+            store.upload["last"] = {"bvid": r.get("bvid") or "", "aid": r.get("aid"),
+                                    "title": title, "tid": tid_i,
+                                    "file": r["path"], "size": r["size"],
+                                    "ts": time.strftime("%Y-%m-%d %H:%M:%S")}
+        out = [f"ok upload {r.get('bvid') or '(无bvid)'}  aid={r.get('aid')}"
+               f"  状态=已提交待审核",
+               f"file: {meta['name']}  {meta['mb']}  chunks={r['chunks']}"
+               f"  上传={r['cost']}s  {r['speed_mb']}MB/s  总耗时={r['total_cost']}s",
+               f"title: {title}   tid={tid_i}   cover={'有' if r.get('cover') else '-'}",
+               "hint: 用 upload_list 查看审核状态；过审后才会公开可见"]
+        return "\n".join(out)
+
+    async def cmd_upload_zones(self, top: int = 0) -> str:
+        """列出投稿分区（父分区 -> tid 子分区）"""
+        from . import upload as up
+
+        z = await up.zones(self.bili.http)
+        lines = ["view=zones  投稿分区（挑 tid 填进 upload）"]
+        rows = z["tree"] if not self._int(top) else z["tree"][: self._int(top)]
+        for t in rows:
+            subs = " / ".join(f"{s['tid']}={s['name']}" for s in t["subs"])
+            lines.append(f"- {t['name']}: {subs}")
+        return "\n".join(lines)
+
+    async def cmd_upload_list(self, pn=1, ps=10) -> str:
+        """我的稿件列表 + 审核状态"""
+        from . import upload as up
+
+        rows = await up.archives(self.bili.http, pn=self._int(pn, 1) or 1,
+                                 ps=self._int(ps, 10) or 10)
+        if not rows:
+            return "view=archives  没有稿件"
+        lines = [f"view=archives  {len(rows)} 条"]
+        for i, a in enumerate(rows, 1):
+            lines.append(f"#{i} {a['bvid'] or a['aid']}  state={a['state']}"
+                         f"({a['state_desc']})  {a['title']}")
+        return "\n".join(lines)
+
     def _player_line(self) -> str:
         p = store.player
         return (f'player: {"playing" if p.playing else "paused"}  {p.bvid}  '
@@ -455,7 +570,8 @@ class Core:
                     "[like --on/--off] [coin --n 2 --also-like] [fav --folder 名称] "
                     "[unfav] [folders] [me] [state] [inbox --kind all] "
                     "[reply --msg-id <id> --message \"文案\"] "
-                    "[roam --on] [roam_check] [roam_next]")
+                    "[roam --on] [roam_check] [roam_next] "
+                    "[upload --file 路径 --title 标题 --tid 21 --confirm] [upload_list]")
         return "actions: [search keyword] [open_video bvid]"
 
 

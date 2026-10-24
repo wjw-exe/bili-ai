@@ -83,6 +83,8 @@ class Store:
         self.inbox: dict = {"items": [], "replied": {},
                             "stats": {"fetched": 0, "replied": 0,
                                       "last_fetch": "", "err": ""}}
+        # 投稿（发视频）：只记录最近一次成功提交，供后台展示
+        self.upload: dict = {"last": None}
 
     def note(self, cmd: str, ok: bool, summary: str) -> None:
         with self.lock:
@@ -106,6 +108,7 @@ class Store:
                 "account": dict(self.account),
                 "inbox": self._inbox_snapshot(),
                 "roam": self._roam_snapshot(),
+                "upload": {"last": dict(self.upload.get("last") or {}) or None},
                 "log": list(self.log),
                 "uptime": round(time.time() - self.started_at, 1),
             }

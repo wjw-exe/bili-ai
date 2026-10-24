@@ -15,7 +15,7 @@ B 站客户端的 **headless 内核 + 双前端**：AI 走 MCP / CLI / HTTP 操�
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
-![MCP](https://img.shields.io/badge/MCP-23%20tools-00aeec)
+![MCP](https://img.shields.io/badge/MCP-26%20tools-00aeec)
 ![No API Key](https://img.shields.io/badge/API%20Key-not%20required-success)
 
 ```bash
@@ -32,7 +32,7 @@ python main.py serve             # → http://127.0.0.1:8770
 [安装](#安装) 与 [启动不起来？](#启动不起来)。
 
 ```
-        ┌──────────── MCP（23 工具） / CLI / HTTP ────────────┐
+        ┌──────────── MCP（26 工具） / CLI / HTTP ────────────┐
         │                                                     ▼
    AI 客户端 ──► core.execute(name, args) ───────────► StateStore（唯一真相源）
                                                              │
@@ -72,6 +72,8 @@ bili-ai 的三条设计原则：
 | 消息 | 用外部 AI 给的文案回复某条消息，并记账防重复 | 已实现 |
 | 巡览 | 定时自动挑视频 → 读字幕 → 生成待评论任务（无字幕不发） | 已实现 |
 | 巡览 | 取任务（含字幕正文）→ 回填文案发布 / 跳过，受每日上限约束 | 已实现 |
+| 投稿 | 查分区 tid、我的稿件与审核状态 | 已实现 |
+| 投稿 | 上传本地视频并提交审核（`upload`，默认 dry-run，`confirm=true` 才真发） | 已实现 |
 | 登录 | 后台扫码 / 命令行扫码 / 粘贴 Cookie，登录态热重载 | 已实现 |
 | 浏览 | 真实取流 playurl、发弹幕、删评论 | 未实现 |
 
@@ -87,7 +89,8 @@ bili-ai 的三条设计原则：
 | `bili/store.py` | StateStore + 逻辑播放器（时钟推进）+ 评论 / 字幕 / 互动 / 收件箱 / 巡览状态 |
 | `bili/fmt.py` | 文本展现层（表格化紧凑输出） |
 | `bili/core.py` | 命令总线，MCP / Web / CLI 共用同一 `execute` |
-| `bili/mcp_server.py` | MCP stdio 层，**23 个工具** |
+| `bili/upload.py` | 投稿链路：preupload → upos 分片上传 / 合并 → 封面上传 → web add 提交审核 |
+| `bili/mcp_server.py` | MCP stdio 层，**26 个工具** |
 | `bili/inbox.py` | 消息收件箱：拉 `msgfeed/reply` + `msgfeed/at`、归一化、baseline、回复记账 |
 | `bili/roam.py` | AI 巡览：取片 → 过滤已见 → 读字幕 → 落 waiting 任务 → 发布 / 跳过 |
 | `bili/web.py` | FastAPI 后台 + SSE + 图床代理 + 扫码登录 + 收件箱 / 巡览接口 |
@@ -167,7 +170,7 @@ INFO:     Uvicorn running on http://127.0.0.1:8770 (Press CTRL+C to quit)
 ```
 
 浏览器打开 `http://127.0.0.1:8770` 能看到三栏后台（Now Playing / 搜索·评论·字幕 / Command Log）即正常。
-MCP 侧另测一条：`python main.py mcp --no-web` 后由客户端 `initialize` + `tools/list` 应返回 23 个工具。
+MCP 侧另测一条：`python main.py mcp --no-web` 后由客户端 `initialize` + `tools/list` 应返回 26 个工具。
 
 ### 接到 MCP 客户端
 
@@ -256,8 +259,11 @@ MCP 工具、`main.py cli <cmd>`、`POST /api/cmd` 三者参数完全一致。
 | `roam_next` | `task_id=""` | 取 waiting 任务：视频信息 + 前 2000 字字幕正文 |
 | `roam_comment` | `task_id` `message` | 发布巡览评论（真实写，不可撤回，受每日上限） |
 | `roam_skip` | `task_id` `reason=manual` | 跳过某任务并记原因 |
+| `upload_zones` | `top=0` | 列投稿分区（父分区 → tid 子分区），选 tid 用 |
+| `upload` | `file` `title` `tid` `desc=""` `tag=""` `cover=""` `copyright=1` `source=""` `confirm=false` | 投稿视频：**默认 dry-run 只预检**，`confirm=true` 才真上传 + 提交审核 |
+| `upload_list` | `pn=1` `ps=10` | 我的稿件与审核状态（`state_desc`） |
 
-`like` / `coin` / `fav` / `unfav` / `folders` / `comment` / `reply` / `roam_comment`
+`like` / `coin` / `fav` / `unfav` / `folders` / `comment` / `reply` / `roam_comment` / `upload` / `upload_list` / `upload_zones`
 需要登录态，未登录返回 `ERR_NEED_LOGIN`（提示去后台扫码），不会静默失败。
 
 输出示例：
@@ -278,6 +284,32 @@ inbox: 2 条  kind=reply  only_unreplied=1  fetched=46  replied=7
   我: 第三段的思路挺关键的
 actions: [reply --msg-id <id> --message "<AI 生成的文案>"]
 ```
+
+## 投稿（发视频）
+
+`upload` 是**全链路**投稿：本地预检 → preupload 申请线路 → upos 分片上传（默认 3 线程、分片重试）→
+合并分片 → 可选封面上传（PIL 在则裁 16:10）→ `x/vu/web/add` 提交审核。
+
+```powershell
+python main.py cli upload_zones                                   # 先挑分区 tid
+python main.py cli upload --file D:\a.mp4 --title "标题" --tid 21 --tag 编程,自制   # 只预检（dry-run）
+python main.py cli upload --file D:\a.mp4 --title "标题" --tid 21 --tag 编程,自制 --confirm
+python main.py cli upload_list                                    # 看审核状态
+```
+
+MCP 侧同名工具：`upload_zones` / `upload_video` / `upload_list`；`upload_video` 的 `confirm`
+默认 `false`，只回投稿计划、**不上传任何字节**。
+
+注意几条：
+
+- **投稿是真实发布**，过审后公开可见、不可撤回，所以 `confirm` 必须显式给；先 dry-run 看清标题/分区/标签。
+- 标题 ≤ 80 字；单文件 ≤ 8G，支持 `mp4/flv/mov/mkv/avi/wmv/webm/m4v`；`copyright=1` 自制、`2` 转载（转载必须给 `source` 原地址）。
+- 分片大小以 preupload 返回的 `chunk_size` 为准（实测 10MB），不是本地写死。
+- 提交返回码会翻成人话：`21001` 参数/分区错、`21564` 投稿频率限制、`21540` 需网页端人工过校。
+- 新版分区体系要 `tid_v2`：默认可不填，出现 `21001` 时程序会用投稿预接口反查一次并自动重提；也可手动传 `tid_v2`。
+- **别拿无效参数试探提交接口**：每发一次 `/x/vu/web/add` 都算一次投稿，连续几次就会吃 `21564`（24 小时级频率限制），
+  严重时 `preupload` 直接 403、SESSDATA 被失效，需要重新扫码登录。预检一律走 `upload`（省掉 `--confirm`），它不发任何请求。
+- 稿件 ID 从 `upload_list` 或 `state`（`upload.last`）拿；刚提交时 `state=0` 之前是审核中，属正常。
 
 ## 字幕（外部 CC，不含画面内嵌字幕）
 
@@ -445,6 +477,7 @@ state，任一环节风控或报文异常会打印错误码。写操作守卫用
 | v0.1.x | 搜索 / 详情 / 逻辑播放 / 评论 / 点赞投币收藏 |
 | v0.2.0 | CC / AI 字幕读取与导出 |
 | v0.3.0 | 消息收件箱（回复我 / @我）、AI 代写回复、AI 巡览；后台改浅色中性主题 |
+| v0.4.0 | 投稿（发视频）：`upload` / `upload_zones` / `upload_list`；upos 分片上传（多线程、分片重试、合并重试）+ 封面上传（16:10 裁剪）+ web add 提交；默认 dry-run 安全阀 |
 | v0.3.1 | 修正安装说明：新增环境要求 / 安装判定 / 启动排错；`requirements.txt` 锁定 `mcp>=1.2,<3`；MCP 层兼容 mcp 1.x `FastMCP` 与 2.x `MCPServer` 两种类名及 `run()` 签名 |
 
 ## License
