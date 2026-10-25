@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 import time
+from html import unescape
 from urllib.parse import quote, urlencode
 
 from . import sign
@@ -17,6 +18,31 @@ MSGREF = "https://message.bilibili.com/"
 # business_id -> 评论对象 type（1 视频 / 12 文章 / 17 动态）
 # 其它值（直播、课程等）oid 语义不同，发评论接口对不上，直接跳过
 BIZ2TYPE = {1: 1, 12: 12, 17: 17}
+
+# B 站弹幕 mode：1 滚动 / 4 底部 / 5 顶部
+DM_MODES = {1: "scroll", 4: "bottom", 5: "top"}
+
+# list.so 返回 <d p="时间秒,mode,字号,颜色,发送时间戳,pool,mid_hash,rowid">正文</d>
+_DM_D = re.compile(r'<d p="([^"]*)"[^>]*>(.*?)</d>', re.S)
+
+
+def parse_danmaku_xml(xml: str) -> list[dict]:
+    """解析 list.so 的 XML 弹幕为 [{t,mode,mode_name,size,color,text}]"""
+    out: list[dict] = []
+    for p, body in _DM_D.findall(str(xml or "")):
+        f = p.split(",")
+        if len(f) < 4:
+            continue
+        try:
+            t, mode, size, color = float(f[0]), int(f[1]), int(f[2]), int(f[3])
+        except ValueError:
+            continue
+        text = unescape(body).strip()
+        if not text:
+            continue
+        out.append({"t": t, "mode": mode, "mode_name": DM_MODES.get(mode, "scroll"),
+                    "size": size, "color": color, "text": text})
+    return out
 
 # 「回复 @某某 :」前缀，归一化时剥掉，只留对方原话
 _AT_PREFIX = re.compile(r"^\s*回复\s*@[^\s:：]+\s*[:：]\s*")
@@ -479,6 +505,85 @@ class Bili:
         return {"aid": aid, "bvid": bvid, "oid": aid, "type": ctype,
                 "rpid": str(d.get("rpid_str") or d.get("rpid") or ""),
                 "message": msg}
+
+    # ---------------- 弹幕 ----------------
+
+    @staticmethod
+    def dm_color(c=16777215) -> int:
+        """把 #RRGGBB / 十进制整数统一成 B 站要的 24 位颜色值；非法值回白"""
+        s = str(c if c not in (None, "") else "16777215").strip()
+        if s[:1] == "#":
+            s = s[1:]
+            # 显式给了 # 前缀却不是 6 位色值（#12345 / #GGGGGG）→ 回白，别猜
+            if len(s) != 6 or not all(ch in "0123456789abcdefABCDEF" for ch in s):
+                return 16777215
+        if len(s) == 6 and all(ch in "0123456789abcdefABCDEF" for ch in s):
+            return int(s, 16)
+        try:
+            v = int(s)
+        except (TypeError, ValueError):
+            return 16777215
+        return v if 0 <= v <= 0xFFFFFF else 16777215
+
+    async def danmaku_send(self, aid: int, bvid: str, message: str,
+                           progress_ms: int = 0, mode: int = 1,
+                           fontsize: int = 25, color=16777215,
+                           pool: int = 0) -> dict:
+        """发一条弹幕。写接口：需登录态 + csrf(bili_jct)，未登录抛 NeedLogin。
+
+        progress_ms 相对「本 P 起点」的毫秒数；正文上限 100 字。
+        同账号短时间连发会被风控（code 直接抛出，不重试）。
+        """
+        msg = str(message or "").strip()
+        if not msg:
+            raise ValueError("弹幕内容不能为空")
+        if len(msg) > 100:
+            raise ValueError(f"弹幕 {len(msg)} 字，超过 100 字上限")
+        mode_i = int(mode or 1)
+        if mode_i not in DM_MODES:
+            raise ValueError("弹幕模式只能是 1(滚动) / 4(底部) / 5(顶部)")
+        prog = max(0, int(progress_ms or 0))
+        col = self.dm_color(color)
+        payload = {"type": 1, "oid": aid, "msg": msg, "bvid": bvid,
+                   "progress": prog, "mode": mode_i, "fontsize": int(fontsize or 25),
+                   "color": col, "pool": int(pool or 0), "plat": 1}
+        v = await self.http.post_json(f"{API}/x/v2/dm/post", payload,
+                                      self._video_ref(bvid))
+        d = v.get("data") or {}
+        return {"aid": aid, "bvid": bvid, "message": msg, "progress": prog,
+                "mode": mode_i, "mode_name": DM_MODES[mode_i], "color": col,
+                "dmid": str(d.get("dmid_str") or d.get("dmid") or "")}
+
+    async def danmaku_list(self, bvid: str, page: int = 1, offset: int = 0,
+                           limit: int = 100, around: float = -1,
+                           window: float = 30.0) -> dict:
+        """读当前 P 的弹幕（x/v1/dm/list.so 全量 XML），按出现时间排序。
+
+        around >= 0 时只取该秒数前后 window 秒内的弹幕——发弹幕前先看氛围用。
+        """
+        ref = self._video_ref(bvid)
+        ps = await self.pages(bvid)
+        if not ps:
+            raise ApiError(-404, "视频不存在或已下架")
+        idx = min(max(1, int(page or 1)), len(ps)) - 1
+        p = ps[idx]
+        xml = await self.http.get_text(f"{API}/x/v1/dm/list.so?oid={p['cid']}", ref)
+        items = parse_danmaku_xml(xml)
+        total = len(items)
+        items.sort(key=lambda d: d["t"])
+        if float(around) >= 0:
+            lo = max(0.0, float(around) - float(window))
+            hi = float(around) + float(window)
+            items = [d for d in items if lo <= d["t"] <= hi]
+        off = max(0, int(offset or 0))
+        lim = 100 if limit is None else int(limit)
+        lim = max(1, min(500, lim))
+        rows = items[off:off + lim]
+        return {"bvid": bvid, "cid": p["cid"], "page": p["page"],
+                "parts": len(ps), "total": total, "mode_total": total,
+                "around": float(around), "window": float(window),
+                "offset": off, "limit": lim, "items": rows,
+                "is_end": off + len(rows) >= len(items)}
 
     # ---------------- 消息（回复我的 / @我的） ----------------
 

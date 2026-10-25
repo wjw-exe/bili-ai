@@ -111,6 +111,32 @@ async def comment(message: str, bvid: str = "", root: int = 0, parent: int = 0) 
 
 
 @mcp.tool()
+async def danmaku(message: str, bvid: str = "", at: str = "", mode: int = 1,
+                  color: str = "#FFFFFF", fontsize: int = 25,
+                  confirm: bool = False) -> str:
+    """发一条弹幕。默认 dry-run 只回执计划；confirm=True 才真实发送（公开发布、不可撤回）。
+    bvid 留空用当前视频；at 是时间点（"90" / "1:30"，留空取当前播放进度）；
+    mode: 1 滚动 / 4 底部 / 5 顶部；color 支持 #RRGGBB。需要登录态。"""
+    await core.bili.warmup()
+    return await core.execute("danmaku",
+                              {"bvid": bvid, "message": message, "at": at,
+                               "mode": mode, "color": color,
+                               "fontsize": fontsize, "confirm": confirm})
+
+
+@mcp.tool()
+async def danmaku_list(bvid: str = "", page: int = 1, offset: int = 0,
+                       limit: int = 100, around: float = -1,
+                       window: float = 30) -> str:
+    """读弹幕列表（按时间排序）。around>=0 时只取该秒数前后 window 秒内的弹幕，
+    发弹幕前用它先看该时间点的氛围；limit 上限 500。"""
+    await core.bili.warmup()
+    return await core.execute("danmaku_list",
+                              {"bvid": bvid, "page": page, "offset": offset,
+                               "limit": limit, "around": around, "window": window})
+
+
+@mcp.tool()
 async def like(bvid: str = "", on: bool = True) -> str:
     """点赞/取消点赞当前视频。需要登录态，未登录会返回 ERR_NEED_LOGIN。"""
     await core.bili.warmup()

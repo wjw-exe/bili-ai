@@ -182,6 +182,35 @@
   .wbtn:disabled{opacity:.45;cursor:not-allowed}
   .wbtn.primary{color:var(--blue-dark);border-color:#b8e6f7;background:var(--blue-soft)}
   .pane.cur#cmts{display:flex;flex-direction:column;overflow:hidden;min-height:0}
+  /* 弹幕面板 */
+  .pane.cur#dms{display:flex;flex-direction:column;overflow:hidden;min-height:0}
+  #dmBody{overflow:auto;flex:1;min-height:0;padding:6px 0}
+  .dm{display:flex;gap:10px;align-items:baseline;padding:3px 14px;font-size:12.5px}
+  .dm:hover{background:var(--surface-2)}
+  .dm .ts{flex:none;width:52px;text-align:right;color:var(--muted);
+       font-family:var(--mono);font-size:11px;font-variant-numeric:tabular-nums}
+  .dm .md{flex:none;font-size:10.5px;color:var(--blue-dark);padding:0 5px;
+       border-radius:3px;background:var(--blue-soft)}
+  .dm .tx{word-break:break-word;color:var(--text-2)}
+  .dm.own .tx{color:var(--ok)}
+  .dmbar{flex:none;display:flex;gap:8px;align-items:flex-end;padding:8px 14px;
+       border-top:1px solid var(--line);background:var(--surface-2);flex-wrap:wrap}
+  .dmbar input[type=text]{width:104px;padding:4px 8px;border:1px solid var(--line);
+       border-radius:var(--r-md);background:var(--surface);color:var(--text);font:inherit;
+       font-size:12px;outline:none}
+  .dmbar input[type=text]:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(0,174,236,.16)}
+  .dmbar select{padding:4px 6px;border:1px solid var(--line);border-radius:var(--r-md);
+       background:var(--surface);color:var(--text);font:inherit;font-size:12px;outline:none}
+  .dmbar input[type=color]{width:28px;height:26px;padding:0;border:1px solid var(--line);
+       border-radius:var(--r-md);background:var(--surface);cursor:pointer}
+  .dmbar textarea{flex:1;min-width:160px;resize:vertical;min-height:32px;padding:6px 8px;
+       border:1px solid var(--line);border-radius:var(--r-md);background:var(--surface);
+       color:var(--text);font:inherit;font-size:12.5px;outline:none}
+  .dmbar textarea:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(0,174,236,.16)}
+  .dmbar button{padding:5px 12px;border:1px solid var(--line);border-radius:var(--r-md);
+       background:var(--surface);color:var(--text);font:inherit;font-size:12px;cursor:pointer}
+  .dmbar button.primary{color:var(--blue-dark);border-color:#b8e6f7;background:var(--blue-soft)}
+  .dmbar button:disabled{opacity:.45;cursor:not-allowed}
   #cmtBody{overflow:auto;flex:1;min-height:0}
   .msg{padding:10px 14px;border-bottom:1px solid var(--line)}
   .msg:hover{background:var(--surface-2)}
@@ -366,6 +395,7 @@
     <div class="tabs">
       <button class="tab cur" id="tabList">搜索结果</button>
       <button class="tab" id="tabCmt">评论</button>
+      <button class="tab" id="tabDm">弹幕</button>
       <button class="tab" id="tabSub">字幕</button>
     </div>
     <div class="pane cur" id="list"><div class="empty">等待 search 命令</div></div>
@@ -407,6 +437,28 @@
         </div>
       </div>
       <div id="cmtBody"><div class="empty">尚未加载评论</div></div>
+    </div>
+    <div class="pane" id="dms">
+      <div class="subbar">
+        <button id="dmLoad">读取弹幕</button>
+        <label class="wsw" title="只看当前播放时刻前后 30 秒的弹幕">
+          <input type="checkbox" id="dmAroundOn">当前时刻附近</label>
+        <button id="dmMore" disabled>加载更多</button>
+        <div class="spacer"></div>
+        <span id="dmMeta">—</span>
+      </div>
+      <div id="dmBody"><div class="empty">点「读取弹幕」拉取当前视频该 P 的弹幕</div></div>
+      <div class="dmbar">
+        <input type="text" id="dmAt" placeholder="时间 1:30" title="留空则用当前播放进度；支持 90 / 1:30 / 1:30.5">
+        <select id="dmMode" title="弹幕类型">
+          <option value="1">滚动</option>
+          <option value="5">顶部</option>
+          <option value="4">底部</option>
+        </select>
+        <input type="color" id="dmColor" value="#FFFFFF" title="弹幕颜色">
+        <textarea id="dmInput" rows="2" maxlength="100" placeholder="发一条弹幕…（Ctrl+Enter 发送，最多 100 字）"></textarea>
+        <button class="primary" id="dmSend">发送</button>
+      </div>
     </div>
     <div class="pane" id="subs">
       <div class="subbar">
@@ -668,7 +720,7 @@ function showFolders(items){
 function switchTab(t){
   tab = t;
   [['list','#tabList','#list'],['cmt','#tabCmt','#cmts'],
-   ['sub','#tabSub','#subs']].forEach(([k,tid,pid]) => {
+   ['dm','#tabDm','#dms'],['sub','#tabSub','#subs']].forEach(([k,tid,pid]) => {
     const te = $(tid), pe = $(pid);
     if (te) te.className = 'tab' + (t === k ? ' cur' : '');
     if (pe) pe.className = 'pane' + (t === k ? ' cur' : '');
@@ -730,6 +782,109 @@ function renderComments(s){
   $('#cmtPrev').disabled = (meta.page||1) <= 1;
   $('#cmtNext').disabled = !!meta.is_end;
 }
+
+/* ---------- 弹幕 ---------- */
+let dmOffset = 0, dmDone = false, dmLoaded = false, dmBusy = false;
+let dmTotal = '', dmBvid = '';
+
+function dmAround(){
+  if (!$('#dmAroundOn').checked) return -1;
+  return ((snap || {}).player || {}).pos || 0;
+}
+
+async function loadDanmaku(reset){
+  if (dmBusy) return;
+  const cur = (snap || {}).current;
+  if (!cur) return toast('先打开一个视频', true);
+  dmBusy = true;
+  const btn = $('#dmLoad'), more = $('#dmMore');
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = '读取中…';
+  const around = dmAround();
+  try {
+    if (reset){ dmOffset = 0; dmDone = false; }
+    const j = await cmd('danmaku_list', {offset: dmOffset, limit: 200,
+      around, window: 30});
+    if (!j.ok) return;
+    const lines = j.out.split('\n'), head = lines[0] || '';
+    const items = [];
+    lines.slice(1).forEach(ln => {
+      const m = ln.match(/^#(\d+)\s+(\d+:\d{2}(?::\d{2})?)\s+(.*)$/);
+      if (m) items.push({no:+m[1], t:m[2], tx:m[3]});
+    });
+    const body = $('#dmBody');
+    if (reset) body.innerHTML = '';
+    if (!items.length && reset){
+      body.innerHTML = '<div class="empty">该区间没有弹幕</div>';
+    } else {
+      body.insertAdjacentHTML('beforeend', items.map(d => {
+        const fm = d.tx.match(/^\[(底|顶)\]/);
+        const flag = fm ? `<span class="md">${fm[1]}</span>` : '';
+        const tx = fm ? d.tx.slice(fm[0].length) : d.tx;
+        return `<div class="dm" data-no="${d.no}"><span class="ts">${d.t}</span>`
+          + `${flag}<span class="tx">${esc(tx)}</span></div>`;
+      }).join(''));
+    }
+    const tot = head.match(/visible=([^\s]+)/);
+    dmTotal = tot ? tot[1] : '';
+    const pm = head.match(/page=(\d+)\/(\d+)/);
+    const nx = (j.out.match(/next: danmaku_list --offset (\d+)/) || [])[1];
+    if (nx){ dmOffset = parseInt(nx, 10); dmDone = false; }
+    else dmDone = true;
+    more.disabled = dmDone;
+    dmLoaded = true; dmBvid = cur.bvid;
+    $('#dmMeta').textContent = (pm ? `P${pm[1]}/${pm[2]} · ` : '')
+      + `接口可见 ${dmTotal || '?'} 条`
+      + (around >= 0 ? ` · ${HMS(Math.max(0, around - 30))}~${HMS(around + 30)}` : '')
+      + (dmDone ? ' · 已到末尾' : ` · 已读 ${dmOffset}`);
+  } finally {
+    dmBusy = false; btn.disabled = false; btn.textContent = old;
+  }
+}
+
+async function sendDanmaku(){
+  const ta = $('#dmInput');
+  const msg = (ta.value || '').trim();
+  if (!msg) return toast('弹幕内容不能为空', true);
+  if (msg.length > 100) return toast(`弹幕 ${msg.length} 字，超过 100 字上限`, true);
+  const at = ($('#dmAt').value || '').trim();
+  const mode = parseInt($('#dmMode').value, 10) || 1;
+  const color = $('#dmColor').value || '#FFFFFF';
+  const mname = {1:'滚动', 5:'顶部', 4:'底部'}[mode] || '滚动';
+  const p = (snap || {}).player || {};
+  const where = at || `${(p.pos || 0).toFixed(0)}s（当前播放进度）`;
+  if (!confirm(`确认发布这条弹幕？发到视频弹幕池后公开可见、不可撤回。\n\n`
+    + `${msg}\n\n时间：${where} · 类型：${mname} · 颜色：${color}`)) return;
+  const btn = $('#dmSend'), old = btn.textContent;
+  btn.disabled = true; btn.textContent = '发送中…';
+  try {
+    const j = await api('/api/cmd', {name:'danmaku', args:{message:msg, at, mode, color, confirm:true}});
+    if (!j.ok){
+      toast((j.out || '发送失败').split('\n')[0], true);
+      if (/ERR_NEED_LOGIN/.test(j.out || '')) openQr();
+      return;
+    }
+    toast('弹幕已发送，过审后可见');
+    ta.value = '';
+    await loadDanmaku(true);
+  } finally {
+    btn.disabled = false; btn.textContent = old;
+  }
+}
+
+$('#tabDm').onclick = () => {
+  switchTab('dm');
+  const cur = (snap || {}).current;
+  if (!cur) return toast('先打开一个视频', true);
+  if (!dmLoaded || dmBvid !== cur.bvid) return loadDanmaku(true);
+};
+$('#dmLoad').onclick = () => loadDanmaku(true);
+$('#dmMore').onclick = () => loadDanmaku(false);
+$('#dmAroundOn').onchange = () => { if ((snap || {}).current) loadDanmaku(true); };
+$('#dmSend').onclick = sendDanmaku;
+$('#dmInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)){ e.preventDefault(); sendDanmaku(); }
+});
 
 /* ---------- 字幕 ---------- */
 let subLang = '', subOffset = 0, subDone = false, subLoading = false;

@@ -206,6 +206,17 @@ class Api:
         except ValueError:
             raise RuntimeError(f"PARSE_ERROR: body={r.text[:120]}")
 
+    async def get_text(self, url: str, referer: str) -> str:
+        """取纯文本资源（弹幕 list.so 返回 XML，不是 JSON）"""
+        self.sync_from_disk()
+        try:
+            r = await self.client.get(url, headers={"Referer": referer})
+        except httpx.HTTPError as e:
+            raise RuntimeError(f"NETWORK_ERROR: {e!r}") from e
+        if r.status_code != 200:
+            raise RuntimeError(f"HTTP_{r.status_code}: {r.text[:120]}")
+        return r.text
+
     async def post_json(self, url: str, data: dict, referer: str,
                         csrf: bool = True) -> dict:
         """表单 POST，自动附带 csrf=bili_jct；写操作接口都必须带"""

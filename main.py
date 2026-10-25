@@ -46,10 +46,12 @@ def _parse_cli(cmd: str, rest: list[str]) -> dict:
             key = k[2:].replace("-", "_")
             if i + 1 < len(rest) and not rest[i + 1].startswith("--"):
                 v = rest[i + 1]
-                if key == "at":
+                if key == "at" and cmd != "danmaku":
                     args[key] = float(v)
-                elif key in ("page", "limit", "offset"):
+                elif key in ("page", "limit", "offset", "mode", "fontsize"):
                     args[key] = int(v)
+                elif key in ("around", "window"):
+                    args[key] = float(v)
                 else:
                     args[key] = v
                 i += 2
@@ -60,7 +62,8 @@ def _parse_cli(cmd: str, rest: list[str]) -> dict:
         i += 1
     if pos:
         main_key = {"search": "keyword", "open_video": "bvid", "play": "bvid",
-                    "comment": "message", "subtitles": "bvid",
+                    "comment": "message", "danmaku": "message",
+                    "subtitles": "bvid",
                     "subtitle": "bvid", "reply": "msg_id",
                     "upload": "file"}.get(cmd)
         if main_key and main_key not in args:
@@ -129,7 +132,7 @@ def _auth_cmd(a) -> int:
 async def _selftest() -> int:
     from bili.core import core
 
-    print("[1/5] warmup + search")
+    print("[1/6] warmup + search")
     out = await core.execute("search", {"keyword": "python", "page": 1, "limit": 3})
     print(out)
     lines = [ln for ln in out.splitlines() if ln.startswith("#")]
@@ -138,17 +141,17 @@ async def _selftest() -> int:
         return 1
 
     bvid = lines[0].split()[1]
-    print(f"\n[2/5] open_video {bvid}")
+    print(f"\n[2/6] open_video {bvid}")
     out = await core.execute("open_video", {"bvid": bvid})
     print(out)
 
-    print("\n[3/5] play / seek / pause")
+    print("\n[3/6] play / seek / pause")
     print(await core.execute("play", {"bvid": "", "at": 0.0}))
     await asyncio.sleep(1.2)
     print(await core.execute("seek", {"to": "+15"}))
     print(await core.execute("pause", {}))
 
-    print("\n[4/5] comments + 写操作守卫")
+    print("\n[4/6] comments + 写操作守卫")
     out = await core.execute("comments", {"page": 1, "limit": 3})
     print(out)
     if not any(ln.startswith("#") for ln in out.splitlines()):
@@ -161,7 +164,7 @@ async def _selftest() -> int:
         print("FAIL: 写操作守卫未如期返回")
         return 1
 
-    print("\n[5/5] subtitles（无字幕轨则跳过，不算失败）")
+    print("\n[5/6] subtitles（无字幕轨则跳过，不算失败）")
     out = await core.execute("subtitles", {"bvid": bvid, "page": 1})
     print(out)
     if "lan=" in out:
@@ -175,6 +178,19 @@ async def _selftest() -> int:
             return 1
     else:
         print("SKIP: 该视频没有字幕轨")
+
+    print("\n[6/6] 弹幕：列表 + dry-run（绝不真发）")
+    out = await core.execute("danmaku_list", {"bvid": bvid, "limit": 3})
+    print(out)
+    if not out.startswith("view=danmaku"):
+        print("FAIL: 弹幕列表读取失败")
+        return 1
+    out = await core.execute("danmaku", {"bvid": bvid, "message": "selftest-dryrun",
+                                         "at": "1:00", "confirm": False})
+    print(out)
+    if "dry-run" not in out:
+        print("FAIL: 弹幕 dry-run 未生效（可能真发了）")
+        return 1
 
     print("\n" + await core.execute("state", {}))
     return 0

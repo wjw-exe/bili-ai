@@ -59,6 +59,9 @@ class Store:
         # 评论面板
         self.comments: list[dict] = []
         self.comments_meta: dict = {}
+        # 弹幕面板：最近一次拉取的弹幕（截断保留），以及我的发送记录
+        self.danmaku: dict = {"bvid": "", "cid": 0, "page": 0, "total": 0, "items": []}
+        self.danmaku_sent: list[dict] = []
         # 当前视频的互动状态；None 表示未登录/未知
         self.inter: dict = {"liked": None, "coins": None, "favoured": None}
         # 字幕：当前视频的轨道列表与已取回的字幕概况
@@ -104,6 +107,12 @@ class Store:
                 "player": self.player.snapshot(),
                 "comments": list(self.comments),
                 "comments_meta": dict(self.comments_meta),
+                "danmaku": {"bvid": self.danmaku.get("bvid", ""),
+                            "cid": self.danmaku.get("cid", 0),
+                            "page": self.danmaku.get("page", 0),
+                            "total": self.danmaku.get("total", 0),
+                            "items": list(self.danmaku.get("items") or []),
+                            "sent": list(self.danmaku_sent[-20:])},
                 "inter": dict(self.inter),
                 "subs": dict(self.subs),
                 "account": dict(self.account),

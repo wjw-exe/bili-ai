@@ -25,6 +25,7 @@ _BLANK_PNG = base64.b64decode(
 )
 ALLOWED = {"search", "open_video", "play", "pause", "resume", "seek", "state", "status",
            "comments", "comment", "like", "coin", "fav", "unfav", "folders", "me",
+           "danmaku", "danmaku_list",
            "subtitles", "subtitle", "inbox", "reply",
            "roam", "roam_list", "roam_check", "roam_next", "roam_comment", "roam_skip",
            "roam_draft", "roam_draft_set", "roam_send"}

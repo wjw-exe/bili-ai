@@ -15,7 +15,7 @@ B 站客户端的 **headless 内核 + 双前端**：AI 走 MCP / CLI / HTTP 操�
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
-![MCP](https://img.shields.io/badge/MCP-33%20tools-00aeec)
+![MCP](https://img.shields.io/badge/MCP-35%20tools-00aeec)
 ![No API Key](https://img.shields.io/badge/API%20Key-not%20required-success)
 
 ```bash
@@ -32,7 +32,7 @@ python main.py serve             # → http://127.0.0.1:8770
 [安装](#安装) 与 [启动不起来？](#启动不起来)。
 
 ```
-        ┌──────────── MCP（33 工具） / CLI / HTTP ────────────┐
+        ┌──────────── MCP（35 工具） / CLI / HTTP ────────────┐
         │                                                     ▼
    AI 客户端 ──► core.execute(name, args) ───────────► StateStore（唯一真相源）
                                                              │
@@ -67,6 +67,8 @@ bili-ai 的三条设计原则：
 | 评论 | 读评论（热门 / 时间）、分页 | 已实现 |
 | 评论 | 发评论、回复某条评论（`root` / `parent`） | 已实现 |
 | 互动 | 点赞 / 投币（1~2）/ 收藏 / 取消收藏 / 列收藏夹 | 已实现 |
+| 弹幕 | 读当前 P 弹幕（全量 / 按时间窗口）、分页 | 已实现 |
+| 弹幕 | 发弹幕（`danmaku`，默认 dry-run，`confirm=true` 才真发） | 已实现 |
 | 字幕 | 列 CC / AI 字幕轨、分页读正文、导出 srt / txt / md | 已实现 |
 | 消息 | 收件箱：别人**回复我** / **@我** 的评论，去重、去已回复 | 已实现 |
 | 消息 | 用外部 AI 给的文案回复某条消息，并记账防重复 | 已实现 |
@@ -75,7 +77,7 @@ bili-ai 的三条设计原则：
 | 投稿 | 查分区 tid、我的稿件与审核状态 | 已实现 |
 | 投稿 | 上传本地视频并提交审核（`upload`，默认 dry-run，`confirm=true` 才真发） | 已实现 |
 | 登录 | 后台扫码 / 命令行扫码 / 粘贴 Cookie，登录态热重载 | 已实现 |
-| 浏览 | 真实取流 playurl、发弹幕、删评论 | 未实现 |
+| 浏览 | 真实取流 playurl、删评论 | 未实现 |
 
 ## 目录
 
@@ -85,12 +87,12 @@ bili-ai 的三条设计原则：
 | `bili/sign.py` | wbi 签名（mixin key 换表 + 参数排序） |
 | `bili/http.py` | HTTP 层：cookie 罐（登录态持久化 + mtime 热重载）、暖机、风控识别与退避 |
 | `bili/auth.py` | 登录：分步扫码（申请 / 出图 / 轮询）/ Cookie 导入 / `nav` 校验 |
-| `bili/api.py` | B 站 Web 接口封装：warmup / search / hot_videos / view / subtitles / comments / comment_add / msgfeed / 互动 |
+| `bili/api.py` | B 站 Web 接口封装：warmup / search / hot_videos / view / subtitles / comments / comment_add / msgfeed / 互动 / danmaku（读 list.so + 发 dm/post） |
 | `bili/store.py` | StateStore + 逻辑播放器（时钟推进）+ 评论 / 字幕 / 互动 / 收件箱 / 巡览状态 |
 | `bili/fmt.py` | 文本展现层（表格化紧凑输出） |
 | `bili/core.py` | 命令总线，MCP / Web / CLI 共用同一 `execute` |
 | `bili/upload.py` | 投稿链路：preupload → upos 分片上传 / 合并 → 封面上传 → web add 提交审核 |
-| `bili/mcp_server.py` | MCP stdio 层，**33 个工具** |
+| `bili/mcp_server.py` | MCP stdio 层，**35 个工具** |
 | `bili/inbox.py` | 消息收件箱：拉 `msgfeed/reply` + `msgfeed/at`、归一化、baseline、回复记账 |
 | `bili/llm.py` | 外部大模型接入（可选）：`base_url` / `model` / `api_key` 配置与连通性测试，供自动回复 / 巡览拟稿调用 |
 | `bili/autoreply.py` | 自动回复：后台轮询收件箱 → 取待回消息 → 大模型拟稿 → 回填 / 发送（默认关闭） |
@@ -174,7 +176,7 @@ INFO:     Uvicorn running on http://127.0.0.1:8770 (Press CTRL+C to quit)
 ```
 
 浏览器打开 `http://127.0.0.1:8770` 能看到三栏后台（Now Playing / 搜索·评论·字幕 / Command Log）即正常。
-MCP 侧另测一条：`python main.py mcp --no-web` 后由客户端 `initialize` + `tools/list` 应返回 33 个工具。
+MCP 侧另测一条：`python main.py mcp --no-web` 后由客户端 `initialize` + `tools/list` 应返回 35 个工具。
 
 ### 接到 MCP 客户端
 
@@ -465,7 +467,13 @@ python main.py logout   # 删除本地 cookie.json
 ## 已知限制
 
 - **已实现接口**：search / hot_videos / view / pages / comments / comment / like / coin / fav / unfav /
-  folders / subtitles / subtitle / nav(me) / msgfeed(reply, at)。**未实现**：高码率 playurl（真实取流）、删评论、发弹幕。
+  folders / subtitles / subtitle / nav(me) / msgfeed(reply, at) / danmaku_list / danmaku(post)。
+  **未实现**：高码率 playurl（真实取流）、删评论。
+- **弹幕读取上限**：`danmaku_list` 走 `x/v1/dm/list.so`，返回的是接口可见的那部分弹幕（单 P 常见
+  1000~6000 条），不等于视频页显示的「弹幕总数」，输出里记为 `visible=`；要按时间看氛围用
+  `around` + `window` 只取窗口内。
+- **弹幕发送不可撤回**：`danmaku` 与投稿同样默认 dry-run，只有显式 `confirm=true`（CLI `--confirm`）
+  才会真发；发出后公开可见、无法删除，短时间连发会被风控直接抛错，本端不重试。
 - **时长秒位**：搜索接口对部分视频返回的 `duration` 本身是 `16:0` 这种缺位值，前端原样显示，不补零
   ——补零等于伪造数据。`open_video` 后拿到的 `dur` 是精确秒数。
 - **逻辑播放**：不对接真实播放器，`t` 是客户端时钟推算值，不是解码进度。
@@ -479,7 +487,8 @@ python main.py selftest
 ```
 
 依次跑 warmup → search → open_video → play/seek/pause → comments + 写操作守卫 → subtitles →
-state，任一环节风控或报文异常会打印错误码。写操作守卫用非法 bvid 测试，不会真的点赞你的账号。
+弹幕列表 + 弹幕 dry-run → state，任一环节风控或报文异常会打印错误码。写操作守卫用非法 bvid 测试，
+弹幕环节只 dry-run，不会真的点赞或发出弹幕。
 
 ## 版本
 
@@ -491,6 +500,7 @@ state，任一环节风控或报文异常会打印错误码。写操作守卫用
 | v0.3.1 | 修正安装说明：新增环境要求 / 安装判定 / 启动排错；`requirements.txt` 锁定 `mcp>=1.2,<3`；MCP 层兼容 mcp 1.x `FastMCP` 与 2.x `MCPServer` 两种类名及 `run()` 签名 |
 | v0.4.0 | 投稿（发视频）：`upload` / `upload_zones` / `upload_list`；upos 分片上传（多线程、分片重试、合并重试）+ 封面上传（16:10 裁剪）+ web add 提交；默认 dry-run 安全阀 |
 | v0.4.1 | 评论真分页：`/x/v2/reply`（pn/ps）→ `/x/v2/reply/wbi/main` 游标 → plain main 三级降级；置顶只在首页保留并去重（字段 `top`，后台显示「置顶」标）；深翻页空列表收口 `is_end`；新增 `tests/` 离线回归（7 例） |
+| v0.6.0 | 弹幕：`danmaku_list`（读当前 P 弹幕，`around` + `window` 时间窗、分页游标）、`danmaku`（发弹幕，100 字 / 滚动·顶部·底部 / `#RRGGBB` 颜色，默认 dry-run，`confirm=true` 才发）；后台新增「弹幕」面板（时间轴列表 + 发送条，发送前二次确认）；离线回归新增 13 例；MCP 工具由 33 增至 35 |
 | v0.5.0 | 接入外部大模型（OpenAI 兼容，Key 只落本地）：`llm` / `llm_configure` / `llm_test`；收件箱自动回复轮询（填 Key 即用，默认关闭）；巡览拟稿 `roam_draft` / `roam_draft_set` / `roam_send`，草稿来源隔离与跨进程并发仲裁；MCP 工具由 26 增至 33 |
 
 ## License

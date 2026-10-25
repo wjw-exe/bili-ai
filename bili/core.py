@@ -138,6 +138,103 @@ class Core:
             pass
         return f'{line}\nmsg: {r["message"]}'
 
+    # ---------------- 弹幕 ----------------
+
+    @staticmethod
+    def _sec_of(v, default=None) -> float:
+        """时间点解析："90" / "1:30" / "1:30.5" -> 秒；空串回 default，非法抛 ValueError"""
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return max(0.0, float(v))
+        s = str(v if v is not None else "").strip()
+        if not s:
+            if default is None:
+                raise ValueError("时间点为空")
+            return max(0.0, float(default))
+        try:
+            if ":" in s:
+                total = 0.0
+                for part in s.split(":"):
+                    total = total * 60 + float(part or 0)
+                return max(0.0, total)
+            return max(0.0, float(s))
+        except ValueError:
+            raise ValueError(f'时间点 "{s}" 无法解析') from None
+
+    async def cmd_danmaku(self, bvid: str = "", message: str = "", at="",
+                          mode=1, color="#FFFFFF", fontsize=25,
+                          confirm: bool = False) -> str:
+        """发弹幕。默认 dry-run 只回执计划；confirm=True 才真实发进视频弹幕池。"""
+        cur = await self._target(bvid)
+        if not cur:
+            return "ERR_NO_TARGET"
+        msg = str(message or "").strip()
+        if not msg:
+            return "ERR_NEED_TEXT: 弹幕内容不能为空"
+        if len(msg) > 100:
+            return f"ERR_TEXT: 弹幕 {len(msg)} 字，超过 100 字上限"
+        mode_i = self._int(mode, 1) or 1
+        if mode_i not in (1, 4, 5):
+            return "ERR_MODE: 弹幕模式只能是 1(滚动) / 4(底部) / 5(顶部)"
+        try:
+            sec = self._sec_of(at, store.player.pos() if store.player.bvid else 0.0)
+        except ValueError as e:
+            return f'ERR_BAD_AT: {e}（支持 90 / 1:30 / 1:30.5）'
+        dur = float(cur.get("dur") or 0)
+        if dur and sec > dur:
+            return (f'ERR_BAD_AT: {sec:.0f}s 超过视频时长 {dur:.0f}s'
+                    f'（{fmt.hms(dur)}）')
+        prog = int(round(sec * 1000))
+        col = self.bili.dm_color(color)
+        mode_name = {1: "scroll", 4: "bottom", 5: "top"}[mode_i]
+
+        plan = [f'plan danmaku{" (dry-run，未发送)" if not confirm else ""}',
+                f'video: {cur["bvid"]}  《{cur["title"][:40]}》',
+                f'at: {fmt.hms(sec)} ({sec:.1f}s)  mode={mode_name}({mode_i})  '
+                f'color=#{col:06X}  size={self._int(fontsize, 25) or 25}',
+                f'msg: {msg}  ({len(msg)}/100 字)']
+        if not confirm:
+            plan.append('提示: 未发送。加 --confirm（MCP: confirm=true）才会真实发到'
+                        '该视频弹幕池，公开可见')
+            return "\n".join(plan)
+
+        r = await self.bili.danmaku_send(cur["avid"], cur["bvid"], msg,
+                                        progress_ms=prog, mode=mode_i,
+                                        fontsize=self._int(fontsize, 25) or 25,
+                                        color=col)
+        with store.lock:
+            store.danmaku_sent.append({"dmid": r["dmid"], "bvid": cur["bvid"],
+                                       "message": msg, "sec": round(sec, 1),
+                                       "mode": mode_name, "color": f"#{col:06X}",
+                                       "ts": time.strftime("%Y-%m-%d %H:%M:%S")})
+            del store.danmaku_sent[:-100]
+        return "\n".join([
+            f'ok danmaku  dmid={r["dmid"] or "-"}  {cur["bvid"]}',
+            f'at: {fmt.hms(sec)}  mode={mode_name}  color=#{col:06X}',
+            f'msg: {msg}',
+            f'hint: 弹幕要过审才可见，几秒后用 danmaku_list --around {sec:.0f} '
+            f'--window 30 核对'])
+
+    async def cmd_danmaku_list(self, bvid: str = "", page=1, offset=0,
+                              limit=100, around=-1, window=30) -> str:
+        """读当前 P 弹幕；around>=0 只看该时间点前后 window 秒"""
+        cur = await self._target(bvid)
+        if not cur:
+            return "ERR_NO_TARGET"
+        try:
+            around_f = float(around)
+        except (TypeError, ValueError):
+            around_f = -1.0
+        r = await self.bili.danmaku_list(cur["bvid"], page=self._int(page, 1) or 1,
+                                         offset=self._int(offset),
+                                         limit=self._int(limit, 100) or 100,
+                                         around=around_f,
+                                         window=float(window or 30))
+        with store.lock:
+            store.danmaku = {"bvid": r["bvid"], "cid": r["cid"],
+                             "page": r["page"], "total": r["total"],
+                             "items": r["items"][:200]}
+        return fmt.danmaku_list(r)
+
     async def cmd_like(self, bvid: str = "", on: bool = True) -> str:
         cur = await self._target(bvid)
         if not cur:
@@ -678,6 +775,8 @@ class Core:
             return ("actions: [play] [pause] [seek +/-sec] [comments --page] "
                     "[subtitles] [subtitle --lang ai-zh --offset 0 --limit 200] "
                     "[like --on/--off] [coin --n 2 --also-like] [fav --folder 名称] "
+                    "[danmaku --message \"文案\" --at 1:30 --confirm] "
+                    "[danmaku_list --around 90 --window 30] "
                     "[unfav] [folders] [me] [state] [inbox --kind all] "
                     "[reply --msg-id <id> --message \"文案\"] "
                     "[roam --on] [roam_check] [roam_next] "

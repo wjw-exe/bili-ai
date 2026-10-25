@@ -55,6 +55,26 @@ def comments(r: dict) -> str:
     return "\n".join(lines)
 
 
+def danmaku_list(r: dict) -> str:
+    """弹幕列表：[mode 标记] 时间 正文。is_end 时给 next 游标"""
+    scope = (f'  窗口={hms(r["around"] - r["window"])}~{hms(r["around"] + r["window"])}'
+             if r.get("around", -1) >= 0 else "")
+    shown = (f'{r["offset"] + 1}-{r["offset"] + len(r["items"])}'
+             if r["items"] else "0")
+    lines = [f'view=danmaku  bvid={r["bvid"]}  cid={r["cid"]}  '
+             f'page={r["page"]}/{r["parts"]}  visible={cnt(r["total"])}  '
+             f'shown={shown}{scope}']
+    for i, d in enumerate(r["items"], 1):
+        flag = {"bottom": "[底]", "top": "[顶]"}.get(d["mode_name"], "")
+        lines.append(f'#{r["offset"] + i}  {hms(d["t"]):>7}  {flag}{d["text"][:70]}')
+    if not r["items"]:
+        lines.append("(该区间没有弹幕)")
+    elif not r["is_end"]:
+        lines.append(f'next: danmaku_list --offset {r["offset"] + len(r["items"])} '
+                     f'--limit {r["limit"]}')
+    return "\n".join(lines)
+
+
 def inter(d: dict) -> str:
     """互动状态一行：1=已操作 0=未操作 ?=未登录/未知"""
     def flag(v):
