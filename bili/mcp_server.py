@@ -219,6 +219,90 @@ async def roam_status() -> str:
 
 
 @mcp.tool()
+async def roam_config(on: bool | None = None, interval: int = 0,
+                      max_per_day: int = -1, source: str = "", keyword: str = "",
+                      llm_draft: bool | None = None,
+                      llm_publish: bool | None = None) -> str:
+    """配置 AI 巡览：开关 / 频率(秒,下限120) / 每日发布上限(0=不限) / 来源 / 关键词，
+    以及是否让内置大模型（llm.py）拟稿、拟完是否直接发布。
+
+    llm_draft=True 时后台会自己用外部大模型按字幕写评论存成 draft（不发）；
+    llm_publish=True 时拟完顺手发布（需先配好 API Key）。两者都可留空表示不改。
+    想保持人工审阅就只开 llm_draft，用 roam_next 看草稿、roam_send 手动发。"""
+    args = {"on": on, "interval": interval, "max_per_day": max_per_day,
+            "source": source, "keyword": keyword,
+            "llm_draft": llm_draft, "llm_publish": llm_publish}
+    return await core.execute("roam", {k: v for k, v in args.items() if v is not None})
+
+
+@mcp.tool()
+async def roam_draft(task_id: str = "", publish: bool | None = None,
+                     force: bool = False) -> str:
+    """让内置大模型给巡览任务写评论文案（只拟稿，默认不发）。
+
+    task_id 留空 = 取最早一个还没草稿的 waiting 任务；指定 task_id 且该任务已有草稿时，
+    默认保留原草稿（可能是对话助手或人工写的），只有 force=True 才覆盖重拟。
+    publish=True 时拟完直接发布（会公开发布，不可撤回）；publish=False/留空只存草稿。
+    拟好的草稿可用 roam_next 读全文、roam_send 原样发出、roam_comment 覆盖后发布。"""
+    args = {"task_id": task_id, "force": bool(force)}
+    if publish is not None:
+        args["publish"] = publish
+    return await core.execute("roam_draft", args)
+
+
+@mcp.tool()
+async def roam_draft_set(task_id: str, text: str, by: str = "agent") -> str:
+    """把你自己写好的评论文案存成该任务的草稿（只存不发，人工确认后用 roam_send 发）。
+
+    与 roam_draft（外部大模型拟稿）共用同一个 draft 字段，靠 draft_by 区分来源，
+    所以没配 API Key 也能走「助手拟稿 → 人确认 → 发布」的完整链路。
+    by 默认 agent；覆盖已有草稿是显式行为，写完 autodraft 不会再重拟该任务。"""
+    return await core.execute("roam_draft_set",
+                              {"task_id": task_id, "text": text, "by": by})
+
+
+@mcp.tool()
+async def roam_send(task_id: str = "") -> str:
+    """把已经拟好的 AI 草稿原样发布到视频下（会公开发布，不可撤回）。
+
+    task_id 留空 = 取最早一个带草稿的 waiting 任务。适合「人先看一眼再发」的流程。"""
+    await core.bili.warmup()
+    return await core.execute("roam_send", {"task_id": task_id})
+
+
+@mcp.tool()
+async def llm_status() -> str:
+    """查看外部大模型（OpenAI 兼容）配置与用量：模型、Key 掩码、今日拟稿/发送数、最近错误，
+    以及巡览里 llm_draft / llm_publish 开关状态。Key 明文永不回显。"""
+    return await core.execute("llm", {})
+
+
+@mcp.tool()
+async def llm_configure(api_key: str = "", base_url: str = "", model: str = "",
+                        roam_prompt: str = "", prompt: str = "",
+                        clear_key: bool | None = None) -> str:
+    """配置外部大模型：填 API Key / 接口地址 / 模型名 / 巡览专用提示词。
+
+    api_key 留空表示不变；base_url 例 https://api.openai.com/v1 或任意 OpenAI 兼容地址；
+    model 例 gpt-4o-mini；roam_prompt 为「看视频写评论」的 system 提示词；
+    clear_key=True 清空 Key。Key 只落本地 .data/llm.json。"""
+    args = {}
+    for k, v in (("api_key", api_key), ("base_url", base_url), ("model", model),
+                 ("roam_prompt", roam_prompt), ("prompt", prompt)):
+        if v:
+            args[k] = v
+    if clear_key is not None:
+        args["clear_key"] = clear_key
+    return await core.execute("llm_configure", args)
+
+
+@mcp.tool()
+async def llm_test() -> str:
+    """真打一次上游接口，验证 Key / 地址 / 模型是否可用（不写任何 B 站数据）。"""
+    return await core.execute("llm_test", {})
+
+
+@mcp.tool()
 async def upload_zones(top: int = 0) -> str:
     """列出投稿分区（父分区 -> tid 子分区），用于给 upload_video 选 tid。需要登录态。"""
     await core.bili.warmup()

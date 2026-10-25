@@ -11,7 +11,9 @@
 因此任何兼容协议的服务（DeepSeek / 通义 / Moonshot / 本地 vLLM …）都能接。
 """
 
+import functools
 import json
+import os
 import threading
 import time
 import urllib.error
@@ -21,6 +23,7 @@ from pathlib import Path
 DATA_DIR = Path(__file__).resolve().parent.parent / ".data"
 CFG_FILE = DATA_DIR / "llm.json"
 STATE_FILE = DATA_DIR / "llm_state.json"
+STATE_LOCK_FILE = DATA_DIR / "llm.state.lock"
 
 DEFAULT_BASE = "https://api.deepseek.com/v1"
 DEFAULT_MODEL = "deepseek-chat"
@@ -29,11 +32,77 @@ DEFAULT_PROMPT = (
     "请写一条不超过 40 字的回复：口语、自然、有回应感，不客套、不刷表情、"
     "不出现「AI/机器人」等自称，不加引号。只输出回复正文。"
 )
+DEFAULT_ROAM_PROMPT = (
+    "你在替 B 站账号主看视频并留评论。你会收到视频标题、UP 主和字幕正文。"
+    "请写一条不超过 60 字的评论：只针对字幕里真正讲到的具体内容发表看法（可提一句"
+    "观点、疑问或补充），口语、自然、有信息量；不概括全文、不客套、不刷表情、"
+    "不出现「AI/机器人」等自称，不加引号。只输出评论正文。"
+)
 TIMEOUT = 45
 
 
 class LLMError(RuntimeError):
     """配置/网络/上游返回错误，message 直接可展示给用户"""
+
+
+class _FileLock:
+    """跨进程互斥（web_core / MCP core / CLI 各持一份用量状态时用）
+
+    用量是「读文件-改-写」，两个进程同时 bump 会丢计数，进而让每日上限
+    判断失真（自动发送超量）。用 O_CREAT|O_EXCL 建锁文件串行化，超时抛
+    TimeoutError，陈旧锁（持锁进程已死）自动清理。
+    """
+
+    def __init__(self, path: Path, timeout: float = 3.0) -> None:
+        self.path = path
+        self.timeout = timeout
+        self.fd: int | None = None
+
+    def __enter__(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        t0 = time.time()
+        while True:
+            try:
+                self.fd = os.open(str(self.path),
+                                  os.O_CREAT | os.O_EXCL | os.O_RDWR)
+                os.write(self.fd, str(os.getpid()).encode())
+                return self
+            except FileExistsError:
+                try:
+                    if time.time() - self.path.stat().st_mtime > 30:
+                        self.path.unlink()
+                        continue
+                except OSError:
+                    pass
+                if time.time() - t0 > self.timeout:
+                    raise TimeoutError("LOCK_TIMEOUT")
+                time.sleep(0.02)
+
+    def __exit__(self, *exc) -> None:
+        if self.fd is not None:
+            try:
+                os.close(self.fd)
+            except OSError:
+                pass
+            self.fd = None
+        try:
+            self.path.unlink()
+        except OSError:
+            pass
+
+
+def _fresh_state(fn):
+    """把「读-改-写用量」包进进程锁，并在锁内强制重读，避免跨进程互相覆盖"""
+    @functools.wraps(fn)
+    def wrapper(self, *a, **kw):
+        try:
+            with _FileLock(STATE_LOCK_FILE):
+                self._st_mtime = -1.0                # 强制重读别进程写入的计数
+                self._state = None
+                return fn(self, *a, **kw)
+        except TimeoutError:
+            return None                              # 拿不到锁就放弃这次计数，不影响主流程
+    return wrapper
 
 
 def _now() -> str:
@@ -81,18 +150,31 @@ class LLM:
         self._lock = threading.RLock()
         self._cfg: dict | None = None
         self._state: dict | None = None
+        self._cfg_mtime = -1.0
+        self._st_mtime = -1.0
 
     # ---------------- 配置 ----------------
 
+    @staticmethod
+    def _mtime(p: Path) -> float:
+        try:
+            return p.stat().st_mtime
+        except OSError:
+            return 0.0
+
     def _load(self) -> dict:
-        if self._cfg is not None:
+        # 别的进程（web 后台 / MCP 进程 / CLI）改过配置就重新读，避免各进程各自缓存
+        mt = self._mtime(CFG_FILE)
+        if self._cfg is not None and mt == self._cfg_mtime:
             return self._cfg
+        self._cfg_mtime = mt
         raw = _read_json(CFG_FILE, {})
         cfg = {
             "base_url": str(raw.get("base_url") or DEFAULT_BASE).strip(),
             "model": str(raw.get("model") or DEFAULT_MODEL).strip(),
             "api_key": str(raw.get("api_key") or ""),
             "prompt": str(raw.get("prompt") or DEFAULT_PROMPT),
+            "roam_prompt": str(raw.get("roam_prompt") or DEFAULT_ROAM_PROMPT),
             "auto_draft": bool(raw.get("auto_draft")),
             "auto_publish": bool(raw.get("auto_publish")),
             "interval": int(raw.get("interval") or 600),
@@ -106,6 +188,7 @@ class LLM:
 
     def _save(self) -> None:
         _write_json(CFG_FILE, self._load())
+        self._cfg_mtime = self._mtime(CFG_FILE)
 
     def raw(self) -> dict:
         with self._lock:
@@ -122,6 +205,7 @@ class LLM:
                 "model": cfg["model"],
                 "key_masked": mask_key(cfg["api_key"]),
                 "prompt": cfg["prompt"],
+                "roam_prompt": cfg["roam_prompt"],
                 "auto_draft": cfg["auto_draft"],
                 "auto_publish": cfg["auto_publish"],
                 "interval": cfg["interval"],
@@ -147,6 +231,8 @@ class LLM:
                 cfg["model"] = str(kw["model"]).strip()
             if "prompt" in kw and str(kw.get("prompt") or "").strip():
                 cfg["prompt"] = str(kw["prompt"]).strip()
+            if "roam_prompt" in kw and str(kw.get("roam_prompt") or "").strip():
+                cfg["roam_prompt"] = str(kw["roam_prompt"]).strip()
             for k in ("auto_draft", "auto_publish"):
                 if k in kw and kw[k] is not None:
                     cfg[k] = bool(kw[k])
@@ -175,8 +261,11 @@ class LLM:
     # ---------------- 用量统计 ----------------
 
     def _state_load(self) -> dict:
-        if self._state is not None and self._state.get("day") == _today():
+        mt = self._mtime(STATE_FILE)
+        if (self._state is not None and self._state.get("day") == _today()
+                and mt == self._st_mtime):
             return self._state
+        self._st_mtime = mt
         raw = _read_json(STATE_FILE, {})
         st = {
             "day": raw.get("day") or _today(),
@@ -197,9 +286,11 @@ class LLM:
     def _state_save(self) -> None:
         try:
             _write_json(STATE_FILE, self._state_load())
+            self._st_mtime = self._mtime(STATE_FILE)
         except OSError:
             pass
 
+    @_fresh_state
     def bump(self, kind: str, n: int = 1) -> None:
         with self._lock:
             st = self._state_load()
@@ -213,6 +304,7 @@ class LLM:
                 st["total_drafted"] += n
             self._state_save()
 
+    @_fresh_state
     def note(self, ok: bool, msg: str = "") -> None:
         with self._lock:
             st = self._state_load()
@@ -304,6 +396,38 @@ class LLM:
         text = self.chat([{"role": "system", "content": cfg["prompt"]},
                           {"role": "user", "content": "\n".join(x for x in user if x)}])
         text = text.strip().strip('"“”\'').replace("\n", " ").strip()
+        return text[:200]
+
+    def draft_for_roam(self, task: dict) -> str:
+        """按一条巡览任务（视频 + 字幕）生成评论文案（同步，最长 200 字）
+
+        巡览和「回复评论」语境不同：这里模型没见过原评论，只能靠字幕判断视频讲了什么，
+        所以单独用 roam_prompt，输入里带上标题 / UP / 时长 / 播放量做上下文。
+        """
+        cfg = self._load()
+        title = str(task.get("title") or "").strip()
+        up = str(task.get("up") or "").strip()
+        dur = int(task.get("dur") or 0)
+        play = int(task.get("play") or 0)
+        body = " ".join(str(task.get("text_head") or task.get("excerpt") or "").split())
+        if not body:
+            raise LLMError("该任务没有字幕正文，无法拟稿")
+        head = [f"视频标题：{title or '(未知)'}"]
+        if up:
+            head.append(f"UP 主：{up}")
+        if dur:
+            head.append(f"时长：{dur // 60} 分 {dur % 60} 秒")
+        if play:
+            head.append(f"播放量：{play}")
+        user = "\n".join(head) + "\n--- 字幕正文（节选）---\n" + body[:1800] + \
+            "\n--- 字幕结束 ---\n请写一条评论。"
+        text = self.chat([{"role": "system", "content": cfg["roam_prompt"]},
+                          {"role": "user", "content": user}], max_tokens=240)
+        text = text.strip().strip('"“”\'')
+        for pre in ("评论：", "评论:", "回复："):
+            if text.startswith(pre):
+                text = text[len(pre):].strip()
+        text = " ".join(text.split())
         return text[:200]
 
     def test(self) -> dict:

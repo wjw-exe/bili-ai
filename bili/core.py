@@ -285,16 +285,29 @@ class Core:
 
         return get_roam(self)
 
+    @property
+    def llm(self):
+        """外部大模型（OpenAI 兼容）；配置与用量落 .data/llm.json"""
+        from .llm import get_llm
+
+        return get_llm(self)
+
     async def cmd_roam(self, on=None, off=None, interval=0, max_per_day=-1,
-                       source: str = "", keyword: str = "") -> str:
-        """配置巡览：开关 / 频率(秒,下限120) / 每日发布上限(0=不限) / 来源 / 关键词"""
+                       source: str = "", keyword: str = "",
+                       llm_draft=None, llm_publish=None) -> str:
+        """配置巡览：开关 / 频率(秒,下限120) / 每日发布上限(0=不限) / 来源 / 关键词
+
+        llm_draft / llm_publish：是否让内置外部大模型（llm.py）拟稿 / 拟完直接发
+        """
         if off is not None and on is None:      # CLI 的 --off 无值解析为 True
             v = off
             flag = (v is True) or str(v).strip().lower() not in ("0", "false", "off", "no", "n", "否")
             on = not flag
         return self.roam.configure(on=on, interval=interval,
                                    max_per_day=max_per_day,
-                                   source=source, keyword=keyword)
+                                   source=source, keyword=keyword,
+                                   llm_draft=llm_draft,
+                                   llm_publish=llm_publish)
 
     async def cmd_roam_list(self, status: str = "", limit: int = 20) -> str:
         return self.roam.list_text(status, limit)
@@ -304,12 +317,109 @@ class Core:
         return self.roam.next_text(task_id)
 
     async def cmd_roam_comment(self, task_id: str = "", message: str = "") -> str:
-        """回填文案并发布（文案由调用方传入，项目内不生成）"""
-        r = await self.roam.publish(task_id, message)
+        """回填文案并发布（文案由调用方传入，或先用 roam_draft 让大模型拟）"""
+        r = await self.roam.publish(task_id, message, by="agent")
         if not r.get("ok"):
             return r["msg"]
         self.roam._sync()
         return f'{r["msg"]}\ntext: {str(message).strip()[:120]}'
+
+    async def cmd_roam_draft(self, task_id: str = "", publish=None,
+                             force=False) -> str:
+        """让内置大模型（llm.py）按字幕写评论文案；publish=True 时拟完直接发
+
+        force=True 才会覆盖已有草稿（含对话侧 Agent 写的），默认保留。
+        """
+        if publish is not None and not isinstance(publish, bool):
+            s = str(publish).strip().lower()
+            publish = s not in ("", "0", "false", "off", "no", "n", "否")
+        if not isinstance(force, bool):
+            force = str(force).strip().lower() not in ("", "0", "false", "off", "no", "n", "否")
+        r = await self.roam.draft_one(task_id, publish=publish, force=force)
+        head = (f'roam_draft: drafted={r.get("drafted", 0)} '
+                f'published={r.get("published", 0)} failed={r.get("failed", 0)}')
+        if r.get("skipped"):
+            return f'{head}\nskipped: {r["skipped"]}'
+        tail = ("\n草稿已存，可 roam_list 查看、roam_next 读全文、roam_send --task-id T 发出，"
+                "或 roam_comment --task-id T --message \"改后文案\" 覆盖")
+        return head + "\n" + "\n".join(r.get("msgs") or ["(无可拟稿任务)"]) + tail
+
+    async def cmd_roam_draft_set(self, task_id: str = "", text: str = "",
+                                 by: str = "agent") -> str:
+        """把调用方（对话侧 Agent / 人工）写好的文案存成草稿，不发布
+
+        与 llm 自动拟稿共用 draft 通道，靠 draft_by 标记来源，互不覆盖。
+        """
+        r = self.roam.set_draft(task_id, text, by=by)
+        if not r.get("ok"):
+            return r["msg"]
+        return f'{r["msg"]}\n草稿：{str(text).strip()[:120]}\n下一步：roam_send --task-id {task_id} 发出'
+
+    async def cmd_roam_send(self, task_id: str = "") -> str:
+        """把已有 AI 草稿原样发出去（人工确认后的最后一跳）"""
+        r = await self.roam.send_draft(task_id)
+        if not r.get("ok"):
+            return r["msg"]
+        self.roam._sync()
+        t = r.get("task") or {}
+        return (f'{r["msg"]}\ntext: {str(t.get("text") or t.get("draft") or "")[:120]}')
+
+    async def cmd_llm(self) -> str:
+        """看外部大模型配置（不含 Key 明文）+ 巡览里 llm 的开关状态"""
+        pub = self.llm.public()
+        st = self.roam._load()
+        stats = pub.get("stats") or {}
+        from .llm import DEFAULT_ROAM_PROMPT
+
+        custom = bool(pub.get("roam_prompt")) and \
+            pub.get("roam_prompt") != DEFAULT_ROAM_PROMPT
+        lines = [
+            (f'llm: configured={int(pub.get("configured", False))}  '
+             f'model={pub.get("model") or "-"}  base_url={pub.get("base_url") or "-"}'),
+            (f'key: {pub.get("key_masked") or "(未填)"}  '
+             f'auto_draft={int(bool(pub.get("auto_draft")))}  '
+             f'auto_publish={int(bool(pub.get("auto_publish")))}  '
+             f'max_per_day={pub.get("max_per_day")}'),
+            (f'roam: llm_draft={int(st["llm_draft"])}  '
+             f'llm_publish={int(st["llm_publish"])}  '
+             f'roam_prompt={"自定义" if custom else "默认"}'),
+            (f'usage: drafted_today={stats.get("drafted_today", 0)}  '
+             f'sent_today={stats.get("sent_today", 0)}  '
+             f'last_error={stats.get("last_error") or "-"}'),
+            ("actions: [llm_configure --api-key sk-xxx] [llm_configure --model gpt-4o-mini] "
+             "[llm_configure --roam-prompt \"...\"] [llm_test]"),
+        ]
+        return "\n".join(lines)
+
+    async def cmd_llm_configure(self, api_key: str = "", base_url: str = "",
+                                model: str = "", roam_prompt: str = "",
+                                prompt: str = "", clear_key=None) -> str:
+        """配外部大模型（Key 只落本地 .data/llm.json，不进 git）"""
+        kw = {}
+        if api_key:
+            kw["api_key"] = api_key
+        if base_url:
+            kw["base_url"] = base_url
+        if model:
+            kw["model"] = model
+        if roam_prompt:
+            kw["roam_prompt"] = roam_prompt
+        if prompt:
+            kw["prompt"] = prompt
+        if clear_key is not None:
+            kw["clear_key"] = bool(clear_key)
+        if not kw:
+            return self.llm.public().__str__()
+        msg = self.llm.configure(**kw)
+        self.roam._sync()
+        return msg
+
+    async def cmd_llm_test(self) -> str:
+        """真打一次上游接口，验证 Key / 地址 / 模型"""
+        r = await asyncio.to_thread(self.llm.test)
+        ok = r.get("ok")
+        return (f'llm_test: ok={int(bool(ok))}  ms={r.get("ms")}  '
+                f'model={r.get("model")}\n{(r.get("reply") or r.get("error") or "")[:200]}')
 
     async def cmd_roam_skip(self, task_id: str = "", reason: str = "manual") -> str:
         out = self.roam.skip(task_id, reason)

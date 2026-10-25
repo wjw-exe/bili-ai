@@ -122,13 +122,20 @@ class Store:
             tasks.append({k: t.get(k) for k in
                           ("task_id", "bvid", "avid", "title", "up", "dur", "play",
                            "lan", "n_cues", "chars", "excerpt", "status",
-                           "reason", "created_at", "sent_at", "rpid")})
+                           "reason", "created_at", "sent_at", "rpid",
+                           "draft", "draft_at", "draft_model", "draft_err",
+                           "draft_by")})
         return {
             "enabled": bool(r.get("enabled")),
             "interval": int(r.get("interval") or 1800),
             "max_per_day": int(r.get("max_per_day") or 0),
             "source": r.get("source") or "hot",
             "keywords": list(r.get("keywords") or []),
+            # AI 拟稿开关与可观测状态：前端据此置灰控件、显示任务卡草稿
+            "llm_draft": bool(r.get("llm_draft")),
+            "llm_publish": bool(r.get("llm_publish")),
+            "llm_ready": bool(r.get("llm_ready")),
+            "llm_model": r.get("llm_model") or "",
             "stats": stats,
             "tasks": tasks,
             "loop": bool(r.get("loop")),

@@ -214,6 +214,9 @@
   .roamopts input:focus,.roamopts select:focus{border-color:var(--blue)}
   .roamopts input:disabled{opacity:.5}
   .roamopts input[type=number]{width:66px}
+  .roamopts label.chk{flex-direction:row;align-items:center;gap:5px;padding-bottom:3px}
+  .roamopts label.chk input{height:auto;width:auto}
+  .roamopts label.chk.off{opacity:.45}
   .roamopts input#roamKw{width:150px}
   .roamtasks{max-height:230px;overflow:auto;padding:0 14px 10px;display:flex;
        flex-direction:column;gap:7px}
@@ -240,6 +243,13 @@
   .rt textarea::placeholder{color:var(--muted)}
   .rt textarea:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(0,174,236,.16)}
   .rt .btns{display:flex;gap:6px;justify-content:flex-end}
+  .rt .ex.bad{color:var(--err);max-height:64px}
+  .rt .ai{margin-top:7px;border:1px solid #cfe6f7;border-radius:var(--r-md);
+       background:#f4fbff;padding:6px 8px}
+  .rt .ai .lb{font-size:10.5px;color:var(--blue-dark);letter-spacing:.02em}
+  .rt .ai .tx{margin-top:3px;font-size:12.5px;line-height:1.55;color:var(--text-2);
+       white-space:pre-wrap;word-break:break-word;max-height:88px;overflow:auto}
+  .rt .ai .btns{margin-top:5px}
 
   /* 日志 */
   .log{overflow:auto;flex:1;padding:8px 10px;font-family:var(--mono);font-size:11.5px;line-height:1.55}
@@ -383,6 +393,11 @@
             <option value="hot">热门</option><option value="search">关键词</option>
           </select></label>
           <label>关键词<input type="text" id="roamKw" placeholder="逗号分隔，如 AI,编程"></label>
+          <label class="chk" title="后台用外部大模型（llm.py）按字幕自动写评论文案，只存草稿不发">
+            <input type="checkbox" id="roamDraftOn">AI 拟稿</label>
+          <label class="chk" title="拟完立刻发布（需先配好 API Key；会公开发布，不可撤回）">
+            <input type="checkbox" id="roamPubOn">拟完直发</label>
+          <button class="wbtn" id="roamAi" title="让大模型给最早一个未拟稿任务写评论">AI 拟稿</button>
           <button class="wbtn primary" id="roamCheck">立即巡览</button>
         </div>
         <div class="roamtasks" id="roamTasks" style="display:none">
@@ -950,9 +965,19 @@ async function sendReply(msgId, ta, btn){
 
 /* ---------- AI 巡览 ---------- */
 let roamOpen = false, roamSig = '', roamDraft = {}, roamBusy = false;
-const RSTAT = {waiting:'待评论', sent:'已发布', skipped:'已跳过', failed:'失败'};
+let roamAiDraft = {};            // 服务端 AI 草稿原文（只读展示用）
+let roamAiBusy = false;          // 「AI 拟稿」按钮在请求中
+const RSTAT = {waiting:'待评论', sent:'已发布', skipped:'已跳过', failed:'失败', sending:'发布中'};
+// 草稿来源：llm=外部模型自动拟稿，agent=对话助手写稿，human=人工/后台保存
+const DBY = {llm:'外部模型草稿', agent:'助手草稿', human:'人工草稿'};
 
 function roamCap(r){ return r.max_per_day ? '/' + r.max_per_day : '(不限)'; }
+
+function roamLlmText(r){
+  if (!r.llm_ready) return '未配 Key';
+  if (!r.llm_draft) return '关';
+  return r.llm_publish ? '开·直发' : '开·只拟稿';
+}
 
 function roamSummary(r){
   const s = r.stats || {};
@@ -960,6 +985,7 @@ function roamSummary(r){
   return `${r.enabled ? '开' : '关'} · 每 ${mins} 分 · 今日 ${s.today_sent||0}${roamCap(r)}`
     + ` · 待评 ${s.waiting||0} · 已发 ${s.sent||0} · 跳过 ${s.skipped||0}`
     + ` · 来源 ${r.source==='search' ? '关键词' : '热门'}`
+    + ` · AI拟稿 ${roamLlmText(r)}`
     + (r.loop ? ' · loop on' : '');
 }
 
@@ -977,6 +1003,23 @@ function renderRoam(r){
   setVal('#roamSrc', r.source || 'hot');
   setVal('#roamKw', (r.keywords || []).join(','));
   $('#roamKw').disabled = ($('#roamSrc').value || 'hot') !== 'search';
+
+  // AI 拟稿 / 拟完直发：没配 Key 时整组置灰，直发还依赖拟稿开关
+  const ready = !!r.llm_ready;
+  const rd = $('#roamDraftOn'), rp = $('#roamPubOn');
+  if (rd && document.activeElement !== rd) rd.checked = !!r.llm_draft;
+  if (rp && document.activeElement !== rp) rp.checked = !!r.llm_publish;
+  if (rd){ rd.disabled = !ready; } 
+  if (rp){ rp.disabled = !ready || !(rd && rd.checked); }
+  [rd, rp].forEach(el => {
+    const lab = el && el.closest('label');
+    if (lab) lab.classList.toggle('off', !ready || (el === rp && rp.disabled));
+  });
+  const aiBtn = $('#roamAi');
+  if (aiBtn){
+    aiBtn.disabled = !ready || roamAiBusy;
+    if (!roamAiBusy) aiBtn.textContent = ready ? 'AI 拟稿' : 'AI 拟稿 · 未配 Key';
+  }
   if (!roamOpen) return;
   renderRoamTasks(r.tasks || []);
 }
@@ -987,17 +1030,21 @@ function renderRoamTasks(tasks){
                  && box.contains(document.activeElement);
   if (typing) return;                        // 正在输入时不重建 DOM，避免丢草稿
   const sig = JSON.stringify(tasks.map(t => [t.task_id, t.status, t.reason,
-                                             t.n_cues, t.chars]));
+                                             t.n_cues, t.chars,
+                                             t.draft || '', t.draft_err || '']));
   if (sig === roamSig) return;
   roamSig = sig;
   if (!tasks.length){
     box.innerHTML = '<div class="empty">暂无巡览任务 · 点「立即巡览」跑一轮</div>';
     return;
   }
+  roamAiDraft = {};
   box.innerHTML = tasks.map(t => {
     const st = t.status || 'waiting';
     const draft = roamDraft[t.task_id] || '';
     const ex = (t.excerpt || '').slice(0, 180);
+    const ai = t.draft || '';
+    if (ai) roamAiDraft[t.task_id] = ai;
     return `
       <div class="rt">
         <div class="h"><span class="bv">${esc(t.bvid)}</span>
@@ -1006,12 +1053,22 @@ function renderRoamTasks(tasks){
         <div class="t">${esc(t.title || '')}</div>
         ${ex ? `<div class="ex">${esc(ex)}</div>` : ''}
         ${t.reason ? `<div class="ex">原因：${esc(t.reason)}</div>` : ''}
+        ${ai ? `<div class="ai">
+          <div class="lb">${DBY[t.draft_by] || '草稿'}${t.draft_model ? ' · ' + esc(t.draft_model) : ''}${t.draft_at ? ' · ' + esc(t.draft_at) : ''}</div>
+          <div class="tx">${esc(ai)}</div>
+          <div class="btns">
+            <button class="wbtn" data-aifill="${esc(t.task_id)}">填入编辑框</button>
+            ${st === 'waiting' ? `<button class="wbtn" data-airedo="${esc(t.task_id)}" data-by="${esc(t.draft_by || '')}">重拟</button>
+            <button class="wbtn primary" data-aisend="${esc(t.task_id)}">发这条草稿</button>` : ''}
+          </div></div>` : ''}
+        ${t.draft_err ? `<div class="ex bad">拟稿失败：${esc(t.draft_err)}</div>` : ''}
         ${st === 'waiting' ? `
         <div class="box">
           <textarea rows="2" maxlength="1000" data-draft="${esc(t.task_id)}"
-            placeholder="写评论；或先「复制字幕」交给外部 AI，写完贴回这里">${esc(draft)}</textarea>
+            placeholder="写评论；或先「复制字幕」交给外部 AI，写完贴回这里">${esc(draft || ai)}</textarea>
           <div class="btns">
             <button class="wbtn" data-copy="${esc(t.task_id)}">复制字幕</button>
+            <button class="wbtn" data-savedraft="${esc(t.task_id)}">存为草稿</button>
             <button class="wbtn" data-skip="${esc(t.task_id)}">跳过</button>
             <button class="wbtn primary" data-send="${esc(t.task_id)}">写评论并发送</button>
           </div>
@@ -1024,12 +1081,54 @@ function renderRoamTasks(tasks){
   box.querySelectorAll('[data-copy]').forEach(b => {
     b.onclick = () => copyRoamText(b.dataset.copy, b);
   });
+  box.querySelectorAll('[data-savedraft]').forEach(b => {
+    b.onclick = () => saveRoamDraft(b.dataset.savedraft, b);
+  });
   box.querySelectorAll('[data-skip]').forEach(b => {
     b.onclick = () => skipRoam(b.dataset.skip, b);
   });
   box.querySelectorAll('[data-send]').forEach(b => {
     b.onclick = () => sendRoam(b.dataset.send, b);
   });
+  box.querySelectorAll('[data-aifill]').forEach(b => {
+    b.onclick = () => {
+      const id = b.dataset.aifill;
+      const txt = roamAiDraft[id] || '';
+      if (!txt) return toast('这条没有 AI 草稿', true);
+      roamDraft[id] = txt;
+      const ta = box.querySelector('[data-draft="' + id + '"]');
+      if (ta){ ta.value = txt; ta.focus(); }
+      toast('已填入编辑框，改完点「写评论并发送」');
+    };
+  });
+  box.querySelectorAll('[data-aisend]').forEach(b => {
+    b.onclick = () => sendRoamDraft(b.dataset.aisend, b);
+  });
+  box.querySelectorAll('[data-airedo]').forEach(b => {
+    b.onclick = () => {
+      const by = b.dataset.by || '';
+      if ((by === 'agent' || by === 'human') &&
+          !confirm('这条草稿是' + (by === 'agent' ? '助手' : '人工') + '写的，重拟会覆盖它，确定？')) return;
+      aiDraft(b.dataset.airedo, false, b, true);
+    };
+  });
+}
+
+async function saveRoamDraft(taskId, btn){
+  const ta = document.querySelector('[data-draft="' + taskId + '"]');
+  const text = ((ta && ta.value) || roamDraft[taskId] || '').trim();
+  if (!text) return toast('编辑框是空的，先写点内容', true);
+  btn.disabled = true; btn.textContent = '保存中…';
+  try {
+    const j = await api('/api/roam/draft_set', {task_id: taskId, text, by: 'human'});
+    if (!j.ok) return toast((j.msg || '保存失败').split('\n')[0], true);
+    delete roamDraft[taskId];
+    roamSig = '';
+    renderRoam(j.roam || {});
+    toast('已存为草稿（不会自动发，确认后可「发这条草稿」）');
+  } finally {
+    btn.disabled = false; btn.textContent = '存为草稿';
+  }
 }
 
 async function copyText(t){
@@ -1088,6 +1187,50 @@ async function skipRoam(taskId, btn){
   }
 }
 
+async function sendRoamDraft(taskId, btn){
+  const txt = roamAiDraft[taskId] || '';
+  if (!txt) return toast('这条没有 AI 草稿', true);
+  if (!confirm('直接发布 AI 草稿到 ' + taskId + ' 对应视频？\n\n' + txt)) return;
+  btn.disabled = true; const old = btn.textContent; btn.textContent = '发送中…';
+  try {
+    const j = await api('/api/roam/send', {task_id: taskId});
+    toast(j.ok ? '已发布 AI 草稿' : (j.msg || '发送失败').split('\n')[0], !j.ok);
+    if (j.ok){ delete roamDraft[taskId]; roamSig = ''; renderRoam(j.roam || {}); }
+  } finally {
+    btn.disabled = false; btn.textContent = old;
+  }
+}
+
+async function aiDraft(taskId, publish, btn, force){
+  if (roamAiBusy) return;
+  roamAiBusy = true;
+  const top = $('#roamAi');
+  const oldTop = top ? top.textContent : '';
+  if (btn){ btn.disabled = true; btn.textContent = '拟稿中…'; }
+  else if (top){ top.disabled = true; top.textContent = '拟稿中…'; }
+  if (publish && !confirm('拟完立刻发布（公开发布，不可撤回），确定？')) {
+    roamAiBusy = false;
+    if (btn){ btn.disabled = false; btn.textContent = '重拟'; }
+    return;
+  }
+  try {
+    const j = await api('/api/roam/draft', {task_id: taskId || '', publish: !!publish, force: !!force});
+    const msgs = j.msgs || [];
+    if (!j.ok){
+      toast((j.skipped || (msgs[0] || '拟稿失败')).split('\n')[0], true);
+    } else {
+      toast(`已拟稿 ${j.drafted||0} 条` + (j.published ? ` · 已发 ${j.published} 条` : ''));
+    }
+    roamSig = '';
+    if (taskId) delete roamDraft[taskId];
+    renderRoam(j.roam || {});
+  } finally {
+    roamAiBusy = false;
+    if (btn){ btn.textContent = '重拟'; btn.disabled = false; }
+    if (top){ top.textContent = oldTop; top.disabled = false; }
+  }
+}
+
 async function saveRoam(body, okMsg){
   const j = await api('/api/roam/set', body);
   if (!j.ok) toast((j.out || j.msg || '设置失败').split('\n')[0], true);
@@ -1118,6 +1261,29 @@ $('#roamSrc').onchange = () => {
 $('#roamKw').onchange = () => {
   saveRoam({keyword: $('#roamKw').value}, '关键词已保存');
 };
+$('#roamDraftOn').onchange = () => {
+  const on = $('#roamDraftOn').checked;
+  // 关掉拟稿时顺带关掉直发，避免留下「直发开、拟稿关」的矛盾状态
+  const body = on ? {llm_draft: true} : {llm_draft: false, llm_publish: false};
+  saveRoam(body, on ? 'AI 拟稿已开启（草稿进任务卡，人工确认后发）' : 'AI 拟稿已关闭');
+};
+$('#roamPubOn').onchange = () => {
+  const on = $('#roamPubOn').checked;
+  if (!on){ saveRoam({llm_publish: false}, '拟完直发已关闭'); return; }
+  if (!confirm('拟完直发：AI 写完立刻公开发布到 B 站，不可撤回。\n确定开启？')){
+    $('#roamPubOn').checked = false;
+    return;
+  }
+  saveRoam({llm_publish: true, llm_draft: true}, 'AI 拟稿并直发已开启');
+};
+$('#roamAi').onclick = () => {
+  if (roamAiBusy) return;
+  if (!$('#roamDraftOn').checked){
+    toast('先勾上「AI 拟稿」', true);
+    return;
+  }
+  aiDraft('', $('#roamPubOn').checked, null);
+};
 $('#roamCheck').onclick = async () => {
   if (roamBusy) return;
   roamBusy = true;
@@ -1127,7 +1293,13 @@ $('#roamCheck').onclick = async () => {
     const j = await api('/api/roam/check', {});
     const r = j.result || {};
     if (!j.ok) toast('巡览出错：' + (r.err || '未知'), true);
-    else toast(`tried=${r.tried||0} 取到=${r.picked||0} 跳过=${r.skipped||0}`);
+    else {
+      const d = r.draft || {};
+      const tail = d.drafted || d.published || d.failed
+        ? ` · 拟稿 ${d.drafted||0}${d.published ? ' 直发 ' + d.published : ''}${d.failed ? ' 失败 ' + d.failed : ''}`
+        : '';
+      toast(`tried=${r.tried||0} 取到=${r.picked||0} 跳过=${r.skipped||0}${tail}`);
+    }
     roamSig = '';
     renderRoam(j.roam || {});
     if (!roamOpen){ roamOpen = true; syncRoamFold(); }

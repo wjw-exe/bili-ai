@@ -26,7 +26,8 @@ _BLANK_PNG = base64.b64decode(
 ALLOWED = {"search", "open_video", "play", "pause", "resume", "seek", "state", "status",
            "comments", "comment", "like", "coin", "fav", "unfav", "folders", "me",
            "subtitles", "subtitle", "inbox", "reply",
-           "roam", "roam_list", "roam_check", "roam_next", "roam_comment", "roam_skip"}
+           "roam", "roam_list", "roam_check", "roam_next", "roam_comment", "roam_skip",
+           "roam_draft", "roam_draft_set", "roam_send"}
 
 # 后台专用 Core：独立 Bili 实例（自己的 httpx client，绑定 uvicorn 的事件循环），
 # 与 MCP 主 loop 的 core 互不干扰；两者共用同一个 store，状态互通。
@@ -212,9 +213,9 @@ async def api_llm_set(request: Request) -> dict:
     """存配置。api_key 留空 = 不改动；clear_key=true = 清空 Key"""
     b = await _body(request)
     llm = _web_ar().llm
-    kw = {k: b.get(k) for k in ("base_url", "model", "prompt", "auto_draft",
-                                "auto_publish", "interval", "max_per_day",
-                                "temperature") if k in b}
+    kw = {k: b.get(k) for k in ("base_url", "model", "prompt", "roam_prompt",
+                                "auto_draft", "auto_publish", "interval",
+                                "max_per_day", "temperature") if k in b}
     key = str(b.get("api_key") or "").strip()
     if key:
         kw["api_key"] = key
@@ -226,6 +227,13 @@ async def api_llm_set(request: Request) -> dict:
         kw["clear_key"] = True
     out = llm.configure(**kw)
     _LLM_CACHE["t"] = 0.0
+    # 首次填 Key 时顺便开启巡览拟稿（只拟稿，是否自动发仍由巡览面板 llm_publish 决定）
+    if key and "llm_draft" not in b and "llm_publish" not in b:
+        try:
+            _web_roam().configure(llm_draft=True,
+                                  llm_publish=None if not b.get("clear_key") else False)
+        except Exception:                        # noqa: BLE001
+            pass
     return {"ok": not out.startswith("ERR"), "msg": out, "llm": _llm_view()}
 
 
@@ -365,8 +373,56 @@ async def api_roam_set(request: Request) -> dict:
         max_per_day = -1
     out = r.configure(on=enabled, interval=interval, max_per_day=max_per_day,
                       source=str(body.get("source") or ""),
-                      keyword=str(body.get("keyword") or ""))
+                      keyword=str(body.get("keyword") or ""),
+                      llm_draft=body.get("llm_draft"),
+                      llm_publish=body.get("llm_publish"))
+    r._sync()                                    # 让 store 里的开关状态立刻反映到前端
     return {"ok": not out.startswith("ERR"), "out": out,
+            "roam": store.snapshot().get("roam")}
+
+
+@app.post("/api/roam/draft")
+async def api_roam_draft(request: Request) -> dict:
+    """让内置大模型给巡览任务拟稿；publish=true 时拟完直接发"""
+    try:
+        body = await request.json()
+    except Exception:                            # noqa: BLE001
+        body = {}
+    pub = body.get("publish")
+    force = bool(body.get("force"))
+    res = await _web_roam().draft_one(str(body.get("task_id") or ""),
+                                      publish=None if pub is None else bool(pub),
+                                      force=force)
+    return {"ok": bool(res.get("drafted")) or bool(res.get("published")),
+            "skipped": res.get("skipped", ""), "msgs": res.get("msgs") or [],
+            "drafted": res.get("drafted", 0), "published": res.get("published", 0),
+            "failed": res.get("failed", 0),
+            "roam": store.snapshot().get("roam")}
+
+
+@app.post("/api/roam/draft_set")
+async def api_roam_draft_set(request: Request) -> dict:
+    """把前端编辑框里的文案存成草稿（只存不发），用于没配 Key 时的人工/助手拟稿"""
+    try:
+        body = await request.json()
+    except Exception:                            # noqa: BLE001
+        return {"ok": False, "msg": "BAD_BODY"}
+    res = _web_roam().set_draft(str(body.get("task_id") or ""),
+                                str(body.get("text") or ""),
+                                by=str(body.get("by") or "human"))
+    return {"ok": bool(res.get("ok")), "msg": res.get("msg"),
+            "roam": store.snapshot().get("roam")}
+
+
+@app.post("/api/roam/send")
+async def api_roam_send(request: Request) -> dict:
+    """把已有 AI 草稿原样发出（人工确认后的最后一跳）"""
+    try:
+        body = await request.json()
+    except Exception:                            # noqa: BLE001
+        body = {}
+    res = await _web_roam().send_draft(str(body.get("task_id") or ""))
+    return {"ok": bool(res.get("ok")), "msg": res.get("msg"),
             "roam": store.snapshot().get("roam")}
 
 
@@ -398,7 +454,7 @@ async def api_roam_comment(request: Request) -> dict:
         return {"ok": False, "msg": "BAD_BODY"}
     r = _web_roam()
     res = await r.publish(str(body.get("task_id") or ""),
-                          str(body.get("message") or ""))
+                          str(body.get("message") or ""), by="human")
     return {"ok": bool(res.get("ok")), "msg": res.get("msg"),
             "roam": store.snapshot().get("roam")}
 
