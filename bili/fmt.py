@@ -45,8 +45,9 @@ def comments(r: dict) -> str:
         head += "  (未登录：仅返回精彩评论 3 条)"
     lines = [head]
     for i, c in enumerate(r["items"], 1):
+        flag = "[置顶] " if c.get("top") else ""
         lines.append(f'#{i}  rpid={c["rpid"]}  like={c["like"]}  sub={c["sub"]}  '
-                     f'{c["uname"]}: {c["msg"][:80]}')
+                     f'{flag}{c["uname"]}: {c["msg"][:80]}')
     if not r["items"]:
         lines.append("(无评论)")
     elif not r["is_end"]:

@@ -1,6 +1,7 @@
 """B 站接口封装：wbi 密钥缓存 + 搜索 + 详情"""
 
 import asyncio
+import json
 import re
 import time
 from urllib.parse import quote, urlencode
@@ -244,27 +245,28 @@ class Bili:
 
     # ---------------- 评论 ----------------
 
-    async def comments(self, aid: int, bvid: str, page: int = 1,
-                       limit: int = 20, mode: int = 3) -> dict:
-        """评论列表。
+    @staticmethod
+    def _top_ids(tops: list[dict], rows: list[dict]) -> set:
+        """置顶评论 rpid 集合：top_replies 全收，replies 里 reply_control.is_up_top 兜底"""
+        ids = set()
+        for r in tops:
+            key = str(r.get("rpid_str") or r.get("rpid") or "")
+            if key:
+                ids.add(key)
+        for r in rows:
+            if ((r.get("reply_control") or {}).get("is_up_top")):
+                key = str(r.get("rpid_str") or r.get("rpid") or "")
+                if key:
+                    ids.add(key)
+        return ids
 
-        未登录时 wbi/main 直接 -403，只有 plain 接口能拿到 3 条「精彩评论」；
-        登录后走 wbi 签名接口可正常分页。这里做自动降级并把实际数据源告知上层。
+    @staticmethod
+    def _norm_replies(rows: list[dict], top_ids: set | None = None) -> list[dict]:
+        """主楼评论归一化（top_replies / replies 共用）。
+
+        top_ids 命中者带 top=True，供前端渲染「置顶」标；非首页传空集合，
+        避免翻页时把置顶条目重复标出来。
         """
-        ps = max(1, min(20, int(limit)))
-        base = {"oid": aid, "type": 1, "mode": mode, "pn": page, "ps": ps}
-        referer = self._video_ref(bvid)
-        src = "wbi"
-        try:
-            params = sign.sign_params(base, await self.mixin_key())
-            v = await self.http.get_json(f"{API}/x/v2/reply/wbi/main", params, referer)
-        except (ApiError, RiskControl):
-            src = "plain"
-            v = await self.http.get_json(f"{API}/x/v2/reply/main", base, referer)
-
-        data = v.get("data") or {}
-        cur = data.get("cursor") or {}
-        rows = list(data.get("top_replies") or []) + list(data.get("replies") or [])
         items, seen = [], set()
         for r in rows:
             rpid = r.get("rpid_str") or r.get("rpid")
@@ -280,10 +282,101 @@ class Bili:
                 "like": r.get("like") or 0,
                 "sub": r.get("rcount") or 0,
                 "ctime": r.get("ctime") or 0,
+                "top": bool(top_ids) and str(rpid or "") in top_ids,
             })
-        return {"aid": aid, "bvid": bvid, "page": page, "source": src,
-                "total": cur.get("all_count") or 0,
-                "is_end": bool(cur.get("is_end")), "items": items[:ps]}
+        return items
+
+    async def _comments_cursor(self, aid: int, bvid: str, page: int,
+                               mode: int, base: dict, plain: bool = False) -> dict:
+        """wbi/main（或 plain main）的游标翻页：该接口不认 pn，只认 pagination_str。
+
+        实测（2026-10）：带 pn=1/2/3 返回的永远是同一页；只有把上一页
+        cursor.pagination_reply.next_offset 塞进 pagination_str 才能拿到下一页。
+        这里顺序翻到第 page 页（page<=1 只发一次请求）。
+        """
+        referer = self._video_ref(bvid)
+        offset, v = "", {}
+        for _ in range(max(1, int(page))):
+            if plain:
+                params = dict(base)
+                payload = json.dumps({"offset": offset}, separators=(",", ":"))
+                params.pop("pn", None)
+                params.pop("ps", None)
+                params["pagination_str"] = payload
+                v = await self.http.get_json(f"{API}/x/v2/reply/main", params, referer)
+            else:
+                payload = json.dumps({"offset": offset}, separators=(",", ":"))
+                params = sign.sign_params(
+                    {"oid": aid, "type": 1, "mode": mode,
+                     "pagination_str": payload}, await self.mixin_key())
+                v = await self.http.get_json(f"{API}/x/v2/reply/wbi/main", params, referer)
+            cur = (v.get("data") or {}).get("cursor") or {}
+            offset = ((cur.get("pagination_reply") or {}).get("next_offset")) or ""
+            if cur.get("is_end") or not offset:
+                break
+        return v
+
+    async def comments(self, aid: int, bvid: str, page: int = 1,
+                       limit: int = 20, mode: int = 3) -> dict:
+        """评论列表（真分页）。
+
+        分页源优先级（实测 2026-10）：
+        1. `/x/v2/reply`（legacy，wbi 签名）：唯一认 pn/ps 的接口，page 直接生效；
+        2. `/x/v2/reply/wbi/main`：只认 pagination_str 游标，按 page 顺序翻；
+        3. `/x/v2/reply/main`（plain）：未登录/风控时的兜底，通常只有几条精彩评论。
+        """
+        ps = max(1, min(20, int(limit)))
+        pn = max(1, int(page or 1))
+        base = {"oid": aid, "type": 1, "mode": mode, "pn": pn, "ps": ps}
+        referer = self._video_ref(bvid)
+
+        # 1) legacy：支持 pn/ps
+        src, v, data = "wbi", None, {}
+        try:
+            params = sign.sign_params(base, await self.mixin_key())
+            v = await self.http.get_json(f"{API}/x/v2/reply", params, referer)
+            data = v.get("data") or {}
+        except (ApiError, RiskControl, NeedLogin):
+            v = None
+
+        if v is not None:
+            pg = data.get("page") or {}
+            replies = list(data.get("replies") or [])
+            # 置顶（reply_control.is_up_top）每页都会回传，仅在首页保留，避免翻页重复
+            tops = list(data.get("top_replies") or []) if pn == 1 else []
+            top_ids = self._top_ids(tops, replies) if pn == 1 else set()
+            items = self._norm_replies(tops + replies, top_ids)[:ps + len(tops)]
+            total = int(pg.get("count") or 0)
+            size = int(pg.get("size") or ps)
+            num = int(pg.get("num") or pn)
+            if not replies:
+                # 服务端深翻页会返回空列表（count 仍很大），此处必须收口，否则上层死循环
+                is_end = True
+            elif total:
+                is_end = num * size >= total
+            else:
+                is_end = len(replies) < ps
+            return {"aid": aid, "bvid": bvid, "page": pn, "source": src,
+                    "total": total, "is_end": bool(is_end), "items": items}
+
+        # 2) wbi/main 游标翻页
+        try:
+            src = "cursor"
+            v = await self._comments_cursor(aid, bvid, pn, mode, base)
+        except (ApiError, RiskControl, NeedLogin):
+            # 3) plain 兜底（未登录态）
+            src = "plain"
+            v = await self._comments_cursor(aid, bvid, pn, mode, base, plain=True)
+
+        data = v.get("data") or {}
+        cur = data.get("cursor") or {}
+        tops = list(data.get("top_replies") or []) if pn == 1 else []
+        replies = list(data.get("replies") or [])
+        top_ids = self._top_ids(tops, replies) if pn == 1 else set()
+        items = self._norm_replies(tops + replies, top_ids)[:ps + len(tops)]
+        return {"aid": aid, "bvid": bvid, "page": pn, "source": src,
+                "total": int(cur.get("all_count") or 0),
+                "is_end": bool(cur.get("is_end")), "items": items}
 
     async def comments_replies(self, aid: int, bvid: str, root: int | str,
                                page: int = 1, limit: int = 20) -> dict:

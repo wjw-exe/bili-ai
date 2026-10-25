@@ -145,6 +145,8 @@
   .cmt:hover{background:var(--surface-2)}
   .cmt .h{display:flex;gap:8px;align-items:baseline;font-size:11.5px;color:var(--dim)}
   .cmt .h b{color:var(--text-2);font-weight:600;font-size:12.5px}
+  .cmt .h .tp{margin-right:5px;padding:0 5px;border-radius:var(--r-sm);background:var(--blue-soft);
+       color:var(--blue-dark);font-size:10.5px;line-height:15px;font-weight:600;flex:none}
   .cmt .h .lk{margin-left:auto;font-size:11px;font-variant-numeric:tabular-nums;color:var(--muted)}
   .cmt .m{margin-top:4px;font-size:13px;line-height:1.6;word-break:break-word;color:var(--text-2)}
   .cmtbar{display:flex;align-items:center;gap:10px;padding:8px 14px;border-top:1px solid var(--line);
@@ -721,7 +723,7 @@ function renderComments(s){
   }
   box.innerHTML = list.map(c => `
     <div class="cmt">
-      <div class="h"><b>${esc(c.uname)}</b><span class="lk">赞 ${CN(c.like)}${c.sub ? ' · 回复 '+CN(c.sub) : ''}</span></div>
+      <div class="h">${c.top ? '<span class="tp">置顶</span>' : ''}<b>${esc(c.uname)}</b><span class="lk">赞 ${CN(c.like)}${c.sub ? ' · 回复 '+CN(c.sub) : ''}</span></div>
       <div class="m">${esc(c.msg)}</div>
     </div>`).join('');
   $('#cmtMeta').textContent = `第 ${meta.page||1} 页 · 共 ${CN(meta.total||0)} 条` + (meta.is_end ? ' · 已到末页' : '');
