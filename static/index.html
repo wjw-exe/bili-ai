@@ -273,6 +273,24 @@
   .folders button{text-align:left;padding:8px 12px;border:1px solid var(--line);
        border-radius:var(--r-md);font-size:13px;color:var(--text-2);background:var(--surface)}
   .folders button:hover{border-color:var(--blue);color:var(--blue-dark);background:var(--blue-soft)}
+  /* 设置弹层（较宽的窄表单） */
+  .dlg.wide{width:462px;align-items:stretch}
+  .dlg .frm{display:flex;flex-direction:column;gap:9px}
+  .dlg .frm label{display:flex;flex-direction:column;gap:4px;font-size:11.5px;color:var(--dim)}
+  .dlg .frm input,.dlg .frm textarea{width:100%;height:28px;padding:0 8px;
+       border:1px solid var(--line);border-radius:var(--r-md);font-size:12.5px;
+       background:var(--surface);color:var(--text);font-family:inherit}
+  .dlg .frm textarea{height:auto;padding:6px 8px;resize:vertical;line-height:1.55}
+  .dlg .frm input:focus,.dlg .frm textarea:focus{border-color:var(--blue);outline:none}
+  .dlg .frm .two{display:flex;gap:8px}
+  .dlg .frm .two label{flex:1;min-width:0}
+  .dlg .frm .chk{flex-direction:row;align-items:center;gap:6px;font-size:12px;color:var(--text-2)}
+  .dlg .frm .chk input{width:auto;height:auto;margin:0}
+  .dlg .frm .hint{font-size:11px;color:var(--muted);line-height:1.55}
+  .dlg .stat{font-size:11.5px;color:var(--dim);line-height:1.7;
+       border-top:1px solid var(--line);padding-top:8px}
+  .dlg .stat b{color:var(--text-2);font-weight:600}
+  .dlg .row2 button.pri{color:var(--blue-dark);border-color:#b8e6f7;background:var(--blue-soft)}
 
   #toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:var(--surface);
        border:1px solid var(--line);color:var(--text);padding:9px 16px;border-radius:var(--r-md);
@@ -303,6 +321,8 @@
   <span class="badge" id="mode">观察模式</span>
   <div class="spacer"></div>
   <div class="meta" id="meta">—</div>
+  <button class="wbtn" id="cmtAiTop" style="margin-right:10px"
+    title="填 API Key，开启后自动回复「回复我的 / @我的」">AI 自动回复</button>
   <div id="acct"></div>
 </header>
 
@@ -345,6 +365,7 @@
         <button data-src="at">@我的</button>
         <div class="spacer"></div>
         <label class="wsw" id="cmtUnWrap" style="display:none"><input type="checkbox" id="cmtUnreplied" checked>只看未回复</label>
+        <button class="wbtn" id="cmtAi" title="配置大模型 API Key，用于自动拟回复文案">AI 回复</button>
         <button class="wbtn" id="cmtRefresh">刷新</button>
       </div>
       <div class="roam" id="roam">
@@ -409,6 +430,42 @@
     <h3>选择收藏夹</h3>
     <div class="folders" id="folderList"></div>
     <div class="row2"><button id="favClose">取消</button></div>
+  </div>
+  <div class="dlg wide" id="dlgLlm" style="display:none">
+    <h3>AI 自动回复 · 填 Key 即生效</h3>
+    <div class="frm">
+      <div class="llmbox" id="llmNow" style="padding:8px 12px;border-radius:8px;background:#f2f8ff;
+        border:1px solid #cfe6ff;margin-bottom:10px;line-height:1.6">状态读取中…</div>
+      <label>接口地址（OpenAI 兼容）
+        <input type="text" id="llmBase" placeholder="https://api.deepseek.com/v1" spellcheck="false">
+      </label>
+      <div class="two">
+        <label>模型<input type="text" id="llmModel" placeholder="deepseek-chat" spellcheck="false"></label>
+        <label>温度<input type="number" id="llmTemp" min="0" max="2" step="0.1" value="0.8"></label>
+      </div>
+      <label>API Key
+        <input type="password" id="llmKey" autocomplete="off" spellcheck="false"
+          placeholder="粘贴 sk-… 后点「保存并开启」，回复会自动发出">
+      </label>
+      <div class="two">
+        <label>轮询间隔(分钟)<input type="number" id="llmInt" min="1" step="1" value="5"></label>
+        <label>每日自动发送上限<input type="number" id="llmMax" min="0" step="1" value="20"
+          title="0 表示不限"></label>
+      </div>
+      <label>提示词（怎么回）
+        <textarea id="llmPrompt" rows="4" maxlength="1000"></textarea>
+      </label>
+      <label class="chk"><input type="checkbox" id="llmDraftOnly">只拟稿不发送（默认关＝生成后直接发出去）</label>
+      <div class="hint">保存后立即启动：每 <b>间隔</b> 分钟拉一次「回复我的 / @我的」，未回复的自动拟文并发出去，
+        受每日上限约束；发出去不可撤回。Key 只存本机 <code>.data\llm.json</code>。</div>
+      <div class="stat" id="llmStat">—</div>
+    </div>
+    <div class="row2">
+      <button id="llmSave" class="pri">保存并开启</button>
+      <button id="llmTest">测试连接</button>
+      <button id="llmClear">清除 Key</button>
+      <button id="llmClose">关闭</button>
+    </div>
   </div>
 </div>
 
@@ -492,6 +549,7 @@ function closeMask(){
   $('#mask').className = 'mask';
   $('#dlgQr').style.display = 'flex';
   $('#dlgFav').style.display = 'none';
+  $('#dlgLlm').style.display = 'none';
   if (qrTimer) { clearInterval(qrTimer); qrTimer = null; }
 }
 
@@ -499,6 +557,7 @@ async function openQr(){
   $('#mask').className = 'mask cur';
   $('#dlgQr').style.display = 'flex';
   $('#dlgFav').style.display = 'none';
+  $('#dlgLlm').style.display = 'none';
   $('#qrTip').className = 'tip';
   $('#qrTip').textContent = '正在申请二维码…';
   $('#qrImg').removeAttribute('src');
@@ -575,6 +634,7 @@ $('#btnCmt').onclick = () => { switchTab('cmt'); loadComments(1); };
 function showFolders(items){
   $('#mask').className = 'mask cur';
   $('#dlgQr').style.display = 'none';
+  $('#dlgLlm').style.display = 'none';
   $('#dlgFav').style.display = 'flex';
   $('#folderList').innerHTML = items.map(f =>
     `<button data-id="${f.id}">${esc(f.title)} <span style="color:var(--dim);font-size:11px">${f.count}</span></button>`
@@ -751,6 +811,8 @@ const BVOF = s => (String(s||'').match(/BV[0-9A-Za-z]{10}/) || [''])[0];
 
 let cmtSrc = 'hot';                 // hot | new | reply | at
 let inboxItems = [], inboxBusy = false;
+let inboxDrafts = {};               // msg_id -> 草稿文案（后端拟好的）
+let llmCfg = null;                  // 大模型配置（只有掩码，无明文 Key）
 
 const isMsgSrc = () => cmtSrc === 'reply' || cmtSrc === 'at';
 
@@ -789,6 +851,7 @@ async function loadInbox(){
       if (j.need_login) openQr();
     } else {
       inboxItems = j.items || [];
+      inboxDrafts = j.drafts || inboxDrafts || {};
       if (!inboxItems.length && !un) inboxItems = [];
     }
   } finally {
@@ -799,16 +862,26 @@ async function loadInbox(){
 
 function renderInbox(){
   const box = $('#cmtBody');
+  // 正在输入时不要重建 DOM，否则用户打的字会被冲掉
+  const ae = document.activeElement;
+  if (ae && ae.tagName === 'TEXTAREA' && box.contains(ae)) return;
   if (!inboxItems.length){
     box.innerHTML = '<div class="empty">没有消息 · 这里只显示别人回复我 / @我的评论</div>';
     return;
   }
+  // 保留已输入内容（避免其它代码路径重建时丢字）
+  const typed = {};
+  box.querySelectorAll('[data-in]').forEach(t => {
+    const v = (t.value || '').trim();
+    if (v) typed[t.dataset.in] = t.value;
+  });
   box.innerHTML = inboxItems.map(m => {
     const st = m.status === 'replied' ? 'replied' : 'new';
     const bv = BVOF(m.uri);
     const src = m.type === 1 ? ('视频 ' + bv) : m.type === 12 ? '文章' : '动态';
     const title = (m.title || '').slice(0, 52);
     const mid = String(m.msg_id || '');
+    const draft = typed[mid] || inboxDrafts[mid] || '';
     return `
     <div class="msg">
       <div class="h"><b>${esc(m.uname || '匿名')}</b><span>mid ${esc(String(m.mid || 0))}</span>
@@ -819,7 +892,8 @@ function renderInbox(){
       ${m.my_msg ? `<div class="my">我原评论：${esc(m.my_msg)}</div>` : ''}
       ${st === 'replied' && m.replied_text ? `<div class="rd">已回：${esc(m.replied_text)}</div>` : ''}
       <div class="box">
-        <textarea rows="1" data-in="${esc(mid)}" placeholder="手动回一句（内容由你写，直接发到评论区）"></textarea>
+        <textarea rows="1" data-in="${esc(mid)}" placeholder="手动回一句（内容由你写，直接发到评论区）">${esc(draft)}</textarea>
+        <button class="wbtn" data-draft="${esc(mid)}" title="用大模型拟一版草稿，填进输入框，不自动发">AI 拟稿</button>
         <button class="wbtn primary" data-send="${esc(mid)}">回复</button>
       </div>
     </div>`;
@@ -828,6 +902,30 @@ function renderInbox(){
     b.onclick = () => sendReply(b.dataset.send,
       box.querySelector(`[data-in="${b.dataset.send}"]`), b);
   });
+  box.querySelectorAll('[data-draft]').forEach(b => {
+    b.onclick = () => draftOne(b.dataset.draft, b,
+      box.querySelector(`[data-in="${b.dataset.draft}"]`));
+  });
+}
+
+/* 单条拟稿：只填输入框，发送仍需点「回复」并确认 */
+async function draftOne(msgId, btn, ta){
+  if (!llmCfg || !llmCfg.configured){
+    toast('先点「AI 回复」填写 API Key', true);
+    openLlm();
+    return;
+  }
+  const old = btn.textContent;
+  btn.disabled = true; btn.textContent = '拟稿中…';
+  try {
+    const j = await api('/api/llm/draft', {msg_id: msgId});
+    if (!j.ok){ toast(j.msg || '拟稿失败', true); return; }
+    if (ta) ta.value = j.text || '';
+    inboxDrafts[msgId] = j.text || '';
+    toast('草稿已生成，确认后点「回复」');
+  } finally {
+    btn.disabled = false; btn.textContent = old;
+  }
 }
 
 async function sendReply(msgId, ta, btn){
@@ -1099,6 +1197,7 @@ function render(s){
   renderComments(s);
   renderInter(s);
   renderRoam(s.roam || {});
+  renderLlm(s.llm || {});
   if (isMsgSrc() && tab === 'cmt' && inboxItems.length) renderInbox();
 
   const log = s.log || [];
@@ -1106,6 +1205,147 @@ function render(s){
     `<div class="l ${l.ok?'':'bad'}" title="${esc(l.cmd)} · ${esc(l.summary)}"><span class="lt">${l.t}</span><span class="c">${esc(l.cmd)}</span><span class="s">${esc(l.summary)}</span></div>`
   ).join('') : '<div class="empty">—</div>';
 }
+
+/* ---------- AI 自动回复设置（API Key） ---------- */
+const LLM_DEF_PROMPT = '用中文回一条 30~60 字的评论回复：先回应对方说的点，语气自然友好，'
+  + '不夸张、不官方腔、不加话题标签，不要出现「作为 AI」。';
+
+function llmSetVal(sel, v){
+  const el = $(sel);
+  if (el && document.activeElement !== el) el.value = v;
+}
+
+function renderLlm(l){
+  if (!l || !Object.keys(l).length) return;
+  llmCfg = l;
+  const open = $('#dlgLlm').style.display === 'flex';
+  if (open){
+    llmSetVal('#llmBase', l.base_url || '');
+    llmSetVal('#llmModel', l.model || '');
+    llmSetVal('#llmTemp', l.temperature != null ? l.temperature : 0.8);
+    llmSetVal('#llmInt', Math.max(1, Math.round((l.interval || 600) / 60)));
+    llmSetVal('#llmMax', l.max_per_day != null ? l.max_per_day : 20);
+    llmSetVal('#llmPrompt', l.prompt || LLM_DEF_PROMPT);
+    const do_ = $('#llmDraftOnly');
+    if (document.activeElement !== do_) do_.checked = l.configured ? !l.auto_publish : false;
+  }
+  const st = l.stats || {};
+  const cap = l.max_per_day || 0;
+  $('#llmStat').innerHTML = (l.configured
+    ? `接口 <b>${esc(l.model || '—')}</b> · Key <b>${esc(l.key_masked || '—')}</b><br>`
+      + `今日拟稿 <b>${st.drafted_today || 0}</b> · 今日已自动发 <b>${st.sent_today || 0}</b>`
+      + (cap ? ` / ${cap}` : '（不限）')
+    : '还没填 Key，AI 拟稿与自动回复都不可用')
+    + (st.last_error ? `<br>最近错误：${esc(String(st.last_error).slice(0, 160))}` : '')
+    + (st.last_ok ? `<br>最近成功：${esc(String(st.last_ok).slice(0, 60))}` : '');
+  // 顶部大字状态：让「开没开」一眼可见
+  const box = $('#llmNow');
+  if (box){
+    const mins = Math.max(1, Math.round((l.interval || 300) / 60));
+    if (!l.configured){
+      box.style.background = '#fff8e6'; box.style.borderColor = '#ffe0a3';
+      box.innerHTML = '<b>未配置</b> · 粘贴 API Key → 点「保存并开启」，之后自动回复「回复我的 / @我的」';
+    } else if (l.auto_publish){
+      box.style.background = '#eefcf1'; box.style.borderColor = '#b7ecc4';
+      box.innerHTML = `<b>自动回复运行中</b> · 每 ${mins} 分钟检查一次 · 未回复的直接发出`
+        + ` · 今日已发 <b>${st.sent_today || 0}</b>${cap ? '/' + cap : ''}`;
+    } else if (l.auto_draft){
+      box.style.background = '#f2f8ff'; box.style.borderColor = '#cfe6ff';
+      box.innerHTML = `<b>只拟稿模式</b> · 每 ${mins} 分钟生成草稿，不自动发送`;
+    } else {
+      box.style.background = '#fff8e6'; box.style.borderColor = '#ffe0a3';
+      box.innerHTML = '<b>Key 已存但未开启</b> · 取消勾选「只拟稿不发送」后保存即自动回复';
+    }
+  }
+  const btn = $('#cmtAi');
+  btn.textContent = l.auto_publish ? 'AI 回复 · 运行中' : (l.configured ? 'AI 回复 · 已配' : 'AI 回复');
+  btn.className = 'wbtn' + (l.configured ? ' primary' : '');
+  const top = $('#cmtAiTop');
+  if (top) top.textContent = l.auto_publish ? 'AI 自动回复 · 运行中' : 'AI 自动回复';
+}
+
+async function openLlm(){
+  $('#mask').className = 'mask cur';
+  $('#dlgQr').style.display = 'none';
+  $('#dlgFav').style.display = 'none';
+  $('#dlgLlm').style.display = 'flex';
+  if (qrTimer){ clearInterval(qrTimer); qrTimer = null; }
+  const j = await api('/api/llm');
+  if (j.ok && j.llm) renderLlm(j.llm);
+  else toast(j.msg || '读取配置失败', true);
+  const el = $('#llmKey');
+  if (el) el.value = '';
+}
+
+async function saveLlm(extra, okMsg){
+  const body = Object.assign({
+    base_url: ($('#llmBase').value || '').trim(),
+    model: ($('#llmModel').value || '').trim(),
+    temperature: parseFloat($('#llmTemp').value),
+    interval: Math.max(1, parseInt($('#llmInt').value, 10) || 10) * 60,
+    max_per_day: Math.max(0, parseInt($('#llmMax').value, 10) || 0),
+    prompt: ($('#llmPrompt').value || '').trim(),
+    auto_draft: true,
+    auto_publish: !$('#llmDraftOnly').checked,
+  }, extra || {});
+  const key = ($('#llmKey').value || '').trim();
+  if (key) body.api_key = key;
+  const j = await api('/api/llm', body);
+  if (j.llm) renderLlm(j.llm);
+  if (!j.ok){
+    toast(String(j.msg || '保存失败').split('\n')[0], true);
+    return j;
+  }
+  if (key) $('#llmKey').value = '';
+  if (okMsg) toast(okMsg);
+  return j;
+}
+
+$('#cmtAi').onclick = openLlm;
+$('#cmtAiTop').onclick = openLlm;
+$('#llmClose').onclick = closeMask;
+$('#llmSave').onclick = async () => {
+  const hasKey = !!($('#llmKey').value || '').trim();
+  const b = $('#llmSave');
+  b.disabled = true; b.textContent = '保存中…';
+  try {
+    const s = await saveLlm(null, '');
+    if (!s.ok){ toast(String(s.msg || '保存失败').split('\n')[0], true); return; }
+    const on = s.llm && s.llm.auto_publish;
+    if (!on){ toast(!$('#llmDraftOnly').checked ? '已保存' : '已保存（只拟稿，不自动发送）'); return; }
+    // 已开启自动回复：立刻跑一轮，不用等下一个轮询点
+    b.textContent = '立即检查中…';
+    const r = await api('/api/llm/run', {limit: 5});
+    if (r.llm) renderLlm(r.llm);
+    if (r.ok){
+      toast(`自动回复已开启 · 本轮拟稿 ${r.drafted || 0} 条 / 已发出 ${r.sent || 0} 条`
+        + (hasKey ? '' : '（等下一个轮询点继续）'));
+    } else {
+      const em = String(r.err || r.msg || '自动回复启动失败');
+      toast(em.includes('还没跑完') ? '自动回复已开启 · 后台正在处理上一轮' : em.split('\n')[0], !em.includes('还没跑完'));
+    }
+  } finally {
+    b.disabled = false; b.textContent = '保存并开启';
+  }
+};
+$('#llmTest').onclick = async () => {
+  const b = $('#llmTest');
+  b.disabled = true; b.textContent = '测试中…';
+  try {
+    const s = await saveLlm(null, '');
+    if (!s.ok) return;
+    const j = await api('/api/llm/test', {});
+    if (j.llm) renderLlm(j.llm);
+    if (j.ok) toast(`连接正常 · ${j.model || '模型可用'}（${j.ms || 0}ms）`);
+    else toast(String(j.msg || '连接失败').split('\n')[0], true);
+  } finally {
+    b.disabled = false; b.textContent = '测试连接';
+  }
+};
+$('#llmClear').onclick = async () => {
+  if (!confirm('清除后 Key 从本机删除，AI 拟稿与自动回复立即停用。确定清除？')) return;
+  await saveLlm({clear_key: true, auto_draft: false, auto_publish: false}, 'Key 已清除');
+};
 
 $('#qrRefresh').onclick = openQr;
 $('#qrClose').onclick = closeMask;

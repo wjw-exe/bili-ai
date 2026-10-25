@@ -42,7 +42,40 @@ app = FastAPI(title="bili-ai", docs_url=None, redoc_url=None, openapi_url=None)
 def _snap() -> dict:
     s = store.snapshot()
     s["readonly"] = core.readonly
+    s["llm"] = _llm_view()
     return s
+
+
+_LLM_CACHE: dict = {"t": 0.0, "v": {}}
+
+
+def _web_ar():
+    """后台专用自动回复器：与 web_core 绑定，Key 与用量落 .data/llm.json"""
+    from .autoreply import get_autoreply
+
+    return get_autoreply(web_core)
+
+
+def _llm_public(llm: dict) -> dict:
+    """统一给前端的形状；stats 里补上「今日额度还剩几条」"""
+    llm = dict(llm or {})
+    st = dict(llm.get("stats") or {})
+    cap = int(llm.get("max_per_day") or 0)
+    st["quota_left"] = max(0, cap - int(st.get("sent_today") or 0)) if cap else -1
+    llm["stats"] = st
+    return llm
+
+
+def _llm_view() -> dict:
+    """1 秒缓存，避免 SSE 每 0.35s 都去读盘"""
+    now = time.time()
+    if now - float(_LLM_CACHE.get("t") or 0) > 1.0:
+        try:
+            _LLM_CACHE["v"] = _llm_public(_web_ar().status())
+        except Exception:                        # noqa: BLE001
+            _LLM_CACHE["v"] = {}
+        _LLM_CACHE["t"] = now
+    return dict(_LLM_CACHE.get("v") or {})
 
 
 def _set_account(info: dict) -> None:
@@ -62,13 +95,19 @@ def _web_roam():
 
 @app.on_event("startup")
 async def _startup() -> None:
-    """起后台巡览轮询（幂等：重复 startup 不会起第二个 loop）"""
+    """起后台巡览 + 自动回复轮询（幂等：重复 startup 不会起第二个 loop）"""
     from .roam import start_loop
 
     try:
         start_loop(_web_roam())
         _web_roam()._sync()
     except Exception:                            # noqa: BLE001  轮询失败不影响后台可用
+        pass
+    try:
+        from .autoreply import start_loop as start_ar
+
+        start_ar(_web_ar())
+    except Exception:                            # noqa: BLE001
         pass
 
 
@@ -158,6 +197,68 @@ async def api_reply(request: Request) -> dict:
     out = await web_core.execute("reply", {"msg_id": msg_id, "message": text})
     ok = out.startswith("ok")
     return {"ok": ok, "out": out, "msg": "" if ok else out, **_inbox_snap()}
+
+
+# ---------------- 自动回复（外部大模型 API Key） ----------------
+
+@app.get("/api/llm")
+async def api_llm() -> dict:
+    """读配置（Key 只回掩码）+ 今日用量"""
+    return {"ok": True, "llm": _llm_view()}
+
+
+@app.post("/api/llm")
+async def api_llm_set(request: Request) -> dict:
+    """存配置。api_key 留空 = 不改动；clear_key=true = 清空 Key"""
+    b = await _body(request)
+    llm = _web_ar().llm
+    kw = {k: b.get(k) for k in ("base_url", "model", "prompt", "auto_draft",
+                                "auto_publish", "interval", "max_per_day",
+                                "temperature") if k in b}
+    key = str(b.get("api_key") or "").strip()
+    if key:
+        kw["api_key"] = key
+        # 「填 Key 即自动回复」：调用方没显式指定开关时，直接开启拟稿+自动发送
+        if not any(k in b for k in ("auto_draft", "auto_publish")):
+            kw["auto_draft"] = True
+            kw["auto_publish"] = True
+    if b.get("clear_key"):
+        kw["clear_key"] = True
+    out = llm.configure(**kw)
+    _LLM_CACHE["t"] = 0.0
+    return {"ok": not out.startswith("ERR"), "msg": out, "llm": _llm_view()}
+
+
+@app.post("/api/llm/test")
+async def api_llm_test() -> dict:
+    """真打一次模型接口，验证地址 / Key / 模型名"""
+    r = await asyncio.to_thread(_web_ar().llm.test)
+    _LLM_CACHE["t"] = 0.0
+    return {**r, "llm": _llm_view()}
+
+
+@app.post("/api/llm/draft")
+async def api_llm_draft(request: Request) -> dict:
+    """给一条消息拟草稿并存下来（不发送）"""
+    b = await _body(request)
+    msg_id = str(b.get("msg_id") or "").strip()
+    if not msg_id:
+        return {"ok": False, "msg": "缺少 msg_id"}
+    r = await _web_ar().draft_one(msg_id)
+    return {**r, **_inbox_snap()}
+
+
+@app.post("/api/llm/run")
+async def api_llm_run(request: Request) -> dict:
+    """手动跑一轮：批量拟稿（auto_publish 打开时才会真发）"""
+    b = await _body(request)
+    try:
+        limit = int(b.get("limit") or 5)
+    except (TypeError, ValueError):
+        limit = 5
+    r = await _web_ar().run_once(limit)
+    _LLM_CACHE["t"] = 0.0
+    return {**r, "llm": _llm_view(), **_inbox_snap()}
 
 
 # ---------------- 登录（后台扫码） ----------------

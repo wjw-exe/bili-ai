@@ -79,8 +79,9 @@ class Store:
             "loop": False,         # 后台轮询是否在跑
         }
         # 消息收件箱（别人回复我 / @我）：items 为最近一次拉取结果，
-        # replied 为 {msg_id: {text, rpid, ts}}，stats 只做展示用
-        self.inbox: dict = {"items": [], "replied": {},
+        # replied 为 {msg_id: {text, rpid, ts}}，drafts 为大模型拟的待发草稿
+        # {msg_id: {text, ts, model}}，stats 只做展示用
+        self.inbox: dict = {"items": [], "replied": {}, "drafts": {},
                             "stats": {"fetched": 0, "replied": 0,
                                       "last_fetch": "", "err": ""}}
         # 投稿（发视频）：只记录最近一次成功提交，供后台展示
@@ -138,6 +139,7 @@ class Store:
         return {
             "items": [dict(m) for m in (b.get("items") or [])],
             "replied": {str(k): dict(v) for k, v in (b.get("replied") or {}).items()},
+            "drafts": {str(k): dict(v) for k, v in (b.get("drafts") or {}).items()},
             "stats": dict(b.get("stats") or {}),
         }
 
