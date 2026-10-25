@@ -15,7 +15,7 @@ B 站客户端的 **headless 内核 + 双前端**：AI 走 MCP / CLI / HTTP 操�
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
-![MCP](https://img.shields.io/badge/MCP-26%20tools-00aeec)
+![MCP](https://img.shields.io/badge/MCP-33%20tools-00aeec)
 ![No API Key](https://img.shields.io/badge/API%20Key-not%20required-success)
 
 ```bash
@@ -32,7 +32,7 @@ python main.py serve             # → http://127.0.0.1:8770
 [安装](#安装) 与 [启动不起来？](#启动不起来)。
 
 ```
-        ┌──────────── MCP（26 工具） / CLI / HTTP ────────────┐
+        ┌──────────── MCP（33 工具） / CLI / HTTP ────────────┐
         │                                                     ▼
    AI 客户端 ──► core.execute(name, args) ───────────► StateStore（唯一真相源）
                                                              │
@@ -90,11 +90,15 @@ bili-ai 的三条设计原则：
 | `bili/fmt.py` | 文本展现层（表格化紧凑输出） |
 | `bili/core.py` | 命令总线，MCP / Web / CLI 共用同一 `execute` |
 | `bili/upload.py` | 投稿链路：preupload → upos 分片上传 / 合并 → 封面上传 → web add 提交审核 |
-| `bili/mcp_server.py` | MCP stdio 层，**26 个工具** |
+| `bili/mcp_server.py` | MCP stdio 层，**33 个工具** |
 | `bili/inbox.py` | 消息收件箱：拉 `msgfeed/reply` + `msgfeed/at`、归一化、baseline、回复记账 |
+| `bili/llm.py` | 外部大模型接入（可选）：`base_url` / `model` / `api_key` 配置与连通性测试，供自动回复 / 巡览拟稿调用 |
+| `bili/autoreply.py` | 自动回复：后台轮询收件箱 → 取待回消息 → 大模型拟稿 → 回填 / 发送（默认关闭） |
 | `bili/roam.py` | AI 巡览：取片 → 过滤已见 → 读字幕 → 落 waiting 任务 → 发布 / 跳过 |
-| `bili/web.py` | FastAPI 后台 + SSE + 图床代理 + 扫码登录 + 收件箱 / 巡览接口 |
+| `bili/web.py` | FastAPI 后台 + SSE + 图床代理 + 扫码登录 + 收件箱 / 巡览 / 大模型接口 |
 | `static/index.html` | 单文件前端，零资源依赖 |
+| `tests/` | 离线回归测试（`pytest tests -q`，不联网、不依赖登录态） |
+| `skills/bili-ai/SKILL.md` | 给 AI 客户端读的接入说明（唯一副本，根目录不再保留同名文件） |
 
 ## 环境要求
 
@@ -170,7 +174,7 @@ INFO:     Uvicorn running on http://127.0.0.1:8770 (Press CTRL+C to quit)
 ```
 
 浏览器打开 `http://127.0.0.1:8770` 能看到三栏后台（Now Playing / 搜索·评论·字幕 / Command Log）即正常。
-MCP 侧另测一条：`python main.py mcp --no-web` 后由客户端 `initialize` + `tools/list` 应返回 26 个工具。
+MCP 侧另测一条：`python main.py mcp --no-web` 后由客户端 `initialize` + `tools/list` 应返回 33 个工具。
 
 ### 接到 MCP 客户端
 
@@ -241,7 +245,7 @@ MCP 工具、`main.py cli <cmd>`、`POST /api/cmd` 三者参数完全一致。
 | `seek` | `to` | 绝对 `"120"`，相对 `"+15"` / `"-30"` |
 | `state` | — | 完整状态：视图 + 数据 + 进度 + 可用动作 |
 | `status` | — | 只读一行进度，最省 token |
-| `comments` | `bvid=""` `page=1` `limit=20` `mode=3` | 读评论，`mode` 3=热门 2=时间 |
+| `comments` | `bvid=""` `page=1` `limit=20` `mode=3` | 读评论，`mode` 3=热门 2=时间；真分页（`limit` 夹在 1–20），置顶条目带 `top=true` 且只在首页出现，翻页自动去重 |
 | `comment` | `message` `bvid=""` `root=0` `parent=0` | 发评论（真实写），`root/parent` 非 0 为回复；需登录 |
 | `like` | `bvid=""` `on=true` | 点赞 / 取消点赞 |
 | `coin` | `bvid=""` `n=1` `also_like=false` | 投币，`n` ∈ {1,2} |
@@ -253,17 +257,24 @@ MCP 工具、`main.py cli <cmd>`、`POST /api/cmd` 三者参数完全一致。
 | `me` | — | 当前登录账号，并刷新后台账号显示 |
 | `inbox` | `kind=all` `limit=20` `only_unreplied=true` | 收件箱：`all` / `reply` / `at`，**只检测不发送** |
 | `reply` | `msg_id` `message` | 按 msg_id 回复该条消息，文案必填，上限 1000 字；需登录 |
-| `roam` | `on/off` `interval` `max_per_day` `source` `keyword` | 巡览配置；`interval` 秒（下限 120） |
+| `roam` | `on/off` `interval` `max_per_day` `source` `keyword` `llm_draft` `llm_publish` | 巡览配置；`interval` 秒（下限 120），后两个开关控制是否让大模型拟稿 / 直接发 |
+| `roam_status` | — | 巡览运行状态：开关 / 频率 / 每日上限 / 计数 / 最近任务（含 skipped 原因） |
 | `roam_list` | `status=""` `limit=20` | 列巡览任务（waiting / sent / skipped / failed） |
 | `roam_check` | `count=1` | 立刻跑一轮取片，只落任务、不发评论 |
 | `roam_next` | `task_id=""` | 取 waiting 任务：视频信息 + 前 2000 字字幕正文 |
+| `roam_draft` | `task_id=""` `publish=null` `force=false` | 让内置大模型拟稿（只写草稿，默认不发）；`publish` 切换该任务是否直接发 |
+| `roam_draft_set` | `task_id` `text` `by="agent"` | 把外部 AI 写好的文案存成草稿，`by` 记录来源（agent / llm），只存不发 |
+| `roam_send` | `task_id=""` | 发布已有草稿（真实写、不可撤回、受每日上限）；留空取最早一个带草稿的任务 |
 | `roam_comment` | `task_id` `message` | 发布巡览评论（真实写，不可撤回，受每日上限） |
 | `roam_skip` | `task_id` `reason=manual` | 跳过某任务并记原因 |
+| `llm` | — | 外部大模型配置与用量（`llm_status` 同源）：模型、Key 掩码、今日拟稿 / 发送数、最近错误 |
+| `llm_configure` | `api_key=""` `base_url=""` `model=""` `roam_prompt=""` `prompt=""` `clear_key=null` | 配置 OpenAI 兼容大模型；Key 只落本地 `.data`，永不明文回显 |
+| `llm_test` | — | 真打一次上游接口验证 Key / 地址 / 模型，不写任何 B 站数据 |
 | `upload_zones` | `top=0` | 列投稿分区（父分区 → tid 子分区），选 tid 用 |
 | `upload` | `file` `title` `tid` `desc=""` `tag=""` `cover=""` `copyright=1` `source=""` `confirm=false` | 投稿视频：**默认 dry-run 只预检**，`confirm=true` 才真上传 + 提交审核 |
 | `upload_list` | `pn=1` `ps=10` | 我的稿件与审核状态（`state_desc`） |
 
-`like` / `coin` / `fav` / `unfav` / `folders` / `comment` / `reply` / `roam_comment` / `upload` / `upload_list` / `upload_zones`
+`like` / `coin` / `fav` / `unfav` / `folders` / `comment` / `reply` / `roam_comment` / `roam_send` / `upload` / `upload_list` / `upload_zones`
 需要登录态，未登录返回 `ERR_NEED_LOGIN`（提示去后台扫码），不会静默失败。
 
 输出示例：
@@ -402,7 +413,7 @@ python main.py logout   # 删除本地 cookie.json
 |---|---|---|
 | GET | `/api/state` | 当前完整快照 |
 | GET | `/api/events` | SSE 推送（约 0.35s 一次，仅变化时发） |
-| POST | `/api/cmd` | 执行白名单内命令：`{"name": "...", "args": {...}}`（26 个名字，含 inbox / reply / roam 系列） |
+| POST | `/api/cmd` | 执行白名单内命令：`{"name": "...", "args": {...}}`（29 个名字，含 inbox / reply / roam / llm 系列） |
 | GET | `/api/inbox` | 收件箱：`kind` / `only_unreplied` / `limit` |
 | POST | `/api/reply` | 回复某条消息：`msg_id` + `message` |
 | GET | `/api/folders` | 收藏夹列表 |
@@ -477,10 +488,11 @@ state，任一环节风控或报文异常会打印错误码。写操作守卫用
 | v0.1.x | 搜索 / 详情 / 逻辑播放 / 评论 / 点赞投币收藏 |
 | v0.2.0 | CC / AI 字幕读取与导出 |
 | v0.3.0 | 消息收件箱（回复我 / @我）、AI 代写回复、AI 巡览；后台改浅色中性主题 |
-| v0.4.0 | 投稿（发视频）：`upload` / `upload_zones` / `upload_list`；upos 分片上传（多线程、分片重试、合并重试）+ 封面上传（16:10 裁剪）+ web add 提交；默认 dry-run 安全阀 |
 | v0.3.1 | 修正安装说明：新增环境要求 / 安装判定 / 启动排错；`requirements.txt` 锁定 `mcp>=1.2,<3`；MCP 层兼容 mcp 1.x `FastMCP` 与 2.x `MCPServer` 两种类名及 `run()` 签名 |
+| v0.4.0 | 投稿（发视频）：`upload` / `upload_zones` / `upload_list`；upos 分片上传（多线程、分片重试、合并重试）+ 封面上传（16:10 裁剪）+ web add 提交；默认 dry-run 安全阀 |
+| v0.4.1 | 评论真分页：`/x/v2/reply`（pn/ps）→ `/x/v2/reply/wbi/main` 游标 → plain main 三级降级；置顶只在首页保留并去重（字段 `top`，后台显示「置顶」标）；深翻页空列表收口 `is_end`；新增 `tests/` 离线回归（7 例） |
+| v0.5.0 | 接入外部大模型（OpenAI 兼容，Key 只落本地）：`llm` / `llm_configure` / `llm_test`；收件箱自动回复轮询（填 Key 即用，默认关闭）；巡览拟稿 `roam_draft` / `roam_draft_set` / `roam_send`，草稿来源隔离与跨进程并发仲裁；MCP 工具由 26 增至 33 |
 
 ## License
 
 [MIT](LICENSE)
-*（内容由AI生成，仅供参考）*

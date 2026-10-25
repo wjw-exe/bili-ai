@@ -102,7 +102,7 @@ actions: [play] [pause] [seek +/-sec] [comments --page] [subtitles] [upload --fi
 ### 评论
 | 工具 | 参数 | 说明 |
 |---|---|---|
-| `comments` | `bvid=""`, `page=1`, `limit=20`, `mode=3` | `mode` 3=热门 2=按时间 |
+| `comments` | `bvid=""`, `page=1`, `limit=20`, `mode=3` | `mode` 3=热门 2=按时间；真分页（`limit` 上限 20），置顶条目带 `top=true`，只在第 1 页出现且已去重 |
 | `comment` | `message`, `bvid=""`, `root=0`, `parent=0` | **真实发布、不可撤回**；`root/parent` 非 0 是回复某条评论（都填目标 rpid） |
 
 ### 互动（真实写账号）
@@ -129,8 +129,20 @@ actions: [play] [pause] [seek +/-sec] [comments --page] [subtitles] [upload --fi
 | 工具 | 参数 | 说明 |
 |---|---|---|
 | `roam_status` | — | 开关 / 频率 / 每日上限 / 来源 / 统计 / 最近任务（含 skipped 原因） |
+| `roam_config` | `on=None`, `interval=0`, `max_per_day=-1`, `source=""`, `keyword=""`, `llm_draft=None`, `llm_publish=None` | 改巡览配置；`interval` 下限 120 秒，`llm_draft` / `llm_publish` 控制是否让大模型拟稿 / 直接发 |
 | `roam_next` | `task_id=""` | 取一个 waiting 任务：视频信息 + 字幕正文（前 2000 字） |
-| `roam_comment` | `task_id`, `text` | 把写好的评论发布到该任务视频下，**受每日上限约束** |
+| `roam_draft` | `task_id=""`, `publish=None`, `force=False` | 让内置大模型写评论文案，**只写草稿不发**；`publish=True` 切换该任务为自动发 |
+| `roam_draft_set` | `task_id`, `text`, `by="agent"` | 把你自己写的文案存成草稿（`by` 记来源），只存不发 |
+| `roam_send` | `task_id=""` | 发布已有草稿（**真实发布、不可撤回、受每日上限**）；留空取最早一个带草稿的任务 |
+| `roam_comment` | `task_id`, `text` | 跳过草稿直接发布文案，**受每日上限约束** |
+| `roam_skip` | `task_id`, `reason="manual"` | 跳过任务并记原因 |
+
+### 外部大模型（可选，OpenAI 兼容）
+| 工具 | 参数 | 说明 |
+|---|---|---|
+| `llm_status` | — | 模型 / Key 掩码 / 今日拟稿与发送数 / 最近错误；**Key 永不明文回显** |
+| `llm_configure` | `api_key=""`, `base_url=""`, `model=""`, `roam_prompt=""`, `prompt=""`, `clear_key=None` | 配置上游；Key 只落本地 `.data`，不进仓库 |
+| `llm_test` | — | 真打一次上游接口验证 Key / 地址 / 模型，**不写任何 B 站数据** |
 
 ### 投稿（不可撤回）
 | 工具 | 参数 | 说明 |
@@ -226,4 +238,3 @@ actions: [play] [pause] [seek +/-sec] [comments --page] [subtitles] [upload --fi
 - ❌ `upload_video(confirm=True)` 当探测手段连发
 - ❌ 用 `like` / `coin` 测连通性
 - ❌ 把 `play` 当成能放画面
-*（内容由AI生成，仅供参考）*
