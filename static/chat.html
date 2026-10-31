@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>bili-ai · 打字控制</title>
+<style>
+  :root {
+    --bg: #f5f6f7;
+    --card: #ffffff;
+    --line: #e4e6e8;
+    --ink: #1f2328;
+    --ink-2: #6a737d;
+    --ink-3: #979da6;
+    --blue: #1a6fe0;
+    --blue-weak: #e9f1fd;
+    --ok: #1a7f37;
+    --bad: #b42318;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 14px/1.65 -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .app { display: flex; flex-direction: column; height: 100%; }
+
+  /* ---------- 顶栏 ---------- */
+  header {
+    flex: 0 0 auto;
+    background: rgba(255,255,255,.92);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+    padding: 10px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .brand { font-weight: 600; letter-spacing: .2px; }
+  .brand span { color: var(--ink-3); font-weight: 400; margin-left: 6px; }
+  .now {
+    flex: 1 1 auto;
+    min-width: 0;
+    color: var(--ink-2);
+    font-size: 12.5px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    text-align: center;
+  }
+  .now b { color: var(--ink); font-weight: 500; }
+  .tools { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; }
+  .switch { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); font-size: 12.5px; cursor: pointer; user-select: none; }
+  .switch input { display: none; }
+  .track {
+    width: 32px; height: 18px; border-radius: 999px; background: #d0d4d9;
+    position: relative; transition: background .16s;
+  }
+  .track::after {
+    content: ""; position: absolute; top: 2px; left: 2px;
+    width: 14px; height: 14px; border-radius: 50%; background: #fff;
+    box-shadow: 0 1px 2px rgba(0,0,0,.2); transition: transform .16s;
+  }
+  .switch input:checked + .track { background: var(--blue); }
+  .switch input:checked + .track::after { transform: translateX(14px); }
+  .link { color: var(--ink-2); text-decoration: none; font-size: 12.5px; padding: 4px 8px; border-radius: 6px; }
+  .link:hover { background: #eceef1; color: var(--ink); }
+
+  /* ---------- 消息流 ---------- */
+  main {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    padding: 18px 16px 8px;
+    scroll-behavior: smooth;
+  }
+  .feed { max-width: 760px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+
+  .intro {
+    color: var(--ink-3);
+    font-size: 12.5px;
+    text-align: center;
+    padding: 6px 0 2px;
+  }
+
+  .row { display: flex; }
+  .row.me { justify-content: flex-end; }
+  .bubble {
+    max-width: 86%;
+    padding: 9px 13px;
+    border-radius: 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .me .bubble { background: var(--blue-weak); border: 1px solid #dbe8fb; }
+  .bot .bubble { background: var(--card); border: 1px solid var(--line); }
+  .bubble .tagline {
+    font-size: 11.5px; color: var(--ink-3); margin: -2px 0 4px;
+  }
+  .bubble.err { border-color: #f3c9c4; background: #fff7f6; color: var(--bad); }
+
+  .out {
+    margin: 6px 0 0;
+    padding: 8px 10px;
+    background: #fafbfc;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    font: 12px/1.6 ui-monospace, "Cascadia Mono", Consolas, monospace;
+    color: #3b4249;
+    max-height: 240px;
+    overflow: auto;
+    white-space: pre-wrap;
+  }
+
+  /* 待确认的命令卡 */
+  .cmd {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 11px 13px;
+    max-width: 86%;
+  }
+  .cmd .head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+  .pill {
+    font-size: 11px; line-height: 1; padding: 4px 7px; border-radius: 5px;
+    background: #eef1f4; color: #4a5259; letter-spacing: .2px;
+  }
+  .pill.w { background: #fdf0e6; color: #9a4b12; }
+  .cmd .body { color: var(--ink); word-break: break-word; }
+  .cmd .acts { display: flex; gap: 8px; margin-top: 10px; }
+  button {
+    font: inherit; cursor: pointer; border-radius: 7px; padding: 5px 14px;
+    border: 1px solid var(--line); background: #fff; color: var(--ink);
+    transition: background .12s, border-color .12s;
+  }
+  button:hover { background: #f2f4f6; }
+  button.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
+  button.primary:hover { background: #1660c6; }
+  button:disabled { opacity: .5; cursor: default; }
+
+  /* ---------- 输入区 ---------- */
+  footer {
+    flex: 0 0 auto;
+    padding: 8px 16px 14px;
+    background: linear-gradient(to top, var(--bg) 72%, rgba(245,246,247,0));
+  }
+  .composer-box { max-width: 760px; margin: 0 auto; }
+  .chips { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0 8px; scrollbar-width: none; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip {
+    flex: 0 0 auto; font-size: 12.5px; color: #4a5259; background: #fff;
+    border: 1px solid var(--line); border-radius: 999px; padding: 4px 11px; cursor: pointer;
+  }
+  .chip:hover { border-color: #c9ced4; background: #fbfbfc; }
+  .composer {
+    display: flex; align-items: flex-end; gap: 8px;
+    background: #fff; border: 1px solid var(--line); border-radius: 12px;
+    padding: 8px 8px 8px 12px;
+  }
+  .composer:focus-within { border-color: #b9d2f5; box-shadow: 0 0 0 3px rgba(26,111,224,.07); }
+  textarea {
+    flex: 1 1 auto; border: 0; outline: 0; resize: none; background: transparent;
+    font: inherit; color: var(--ink); max-height: 140px; line-height: 1.6;
+    padding: 3px 0;
+  }
+  textarea::placeholder { color: #a7adb5; }
+  #send { flex: 0 0 auto; }
+  .tip { text-align: center; color: var(--ink-3); font-size: 11.5px; margin-top: 7px; }
+
+  @media (max-width: 620px) {
+    header { padding: 9px 12px; }
+    .now { display: none; }
+    .bubble, .cmd { max-width: 92%; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="brand">bili-ai<span>打字控制</span></div>
+    <div class="now" id="now"></div>
+    <div class="tools">
+      <label class="switch" title="关闭时，评论/点赞等写操作会先让你确认">
+        <input type="checkbox" id="direct">
+        <span class="track"></span>
+        <span>直接执行</span>
+      </label>
+      <a class="link" href="/">后台</a>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="feed" id="feed">
+      <div class="intro">直接说人话就行。搜索、打开视频、看评论、发评论、回复消息、点赞投币收藏、开关巡览。</div>
+    </div>
+  </main>
+
+  <footer>
+    <div class="composer-box">
+      <div class="chips" id="chips">
+        <div class="chip">搜 嵌入式开发</div>
+        <div class="chip">看看评论区</div>
+        <div class="chip">看看谁回我了</div>
+        <div class="chip">给这个视频点赞</div>
+        <div class="chip">评论 讲得挺清楚</div>
+        <div class="chip">现在什么状态</div>
+      </div>
+      <div class="composer">
+        <textarea id="input" rows="1" placeholder="比如：搜一下机械键盘 / 评论 讲得挺清楚 / 回复第一条 好的"></textarea>
+        <button id="send" class="primary">发送</button>
+      </div>
+      <div class="tip">Enter 发送，Shift + Enter 换行</div>
+    </div>
+  </footer>
+</div>
+
+<script>
+(function () {
+  const feed = document.getElementById('feed');
+  const main = document.getElementById('main');
+  const input = document.getElementById('input');
+  const send = document.getElementById('send');
+  const direct = document.getElementById('direct');
+  const nowEl = document.getElementById('now');
+
+  // 记住「直接执行」开关
+  direct.checked = localStorage.getItem('chat.direct') === '1';
+  direct.addEventListener('change', () => {
+    localStorage.setItem('chat.direct', direct.checked ? '1' : '0');
+  });
+
+  function scrollDown() { main.scrollTop = main.scrollHeight; }
+
+  function el(tag, cls, text) {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+
+  function addMine(text) {
+    const row = el('div', 'row me');
+    row.appendChild(el('div', 'bubble', text));
+    feed.appendChild(row);
+    scrollDown();
+  }
+
+  function addBot(text, opt) {
+    opt = opt || {};
+    const row = el('div', 'row bot');
+    const b = el('div', 'bubble' + (opt.err ? ' err' : ''));
+    if (opt.tag) b.appendChild(el('div', 'tagline', opt.tag));
+    if (text) b.appendChild(document.createTextNode(text));
+    if (opt.out) b.appendChild(el('pre', 'out', opt.out));
+    row.appendChild(b);
+    feed.appendChild(row);
+    scrollDown();
+    return b;
+  }
+
+  // 写操作确认卡
+  function addConfirm(data) {
+    const wrap = el('div', 'cmd');
+    const head = el('div', 'head');
+    (data.labels || ['执行']).forEach(l => head.appendChild(el('span', 'pill w', l)));
+    wrap.appendChild(head);
+    wrap.appendChild(el('div', 'body', data.preview || ''));
+    const acts = el('div', 'acts');
+    const ok = el('button', 'primary', '执行');
+    const no = el('button', '', '取消');
+    acts.appendChild(ok); acts.appendChild(no);
+    wrap.appendChild(acts);
+    feed.appendChild(wrap);
+    scrollDown();
+
+    ok.addEventListener('click', async () => {
+      ok.disabled = no.disabled = true;
+      ok.textContent = '执行中…';
+      try {
+        const r = await fetch('/api/chat/exec', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: data.token })
+        });
+        const d = await r.json();
+        wrap.remove();
+        showDone(d);
+      } catch (e) {
+        wrap.remove();
+        addBot('执行请求失败：' + e.message, { err: true });
+      }
+    });
+    no.addEventListener('click', () => {
+      wrap.remove();
+      addBot('好，那就不发了。', {});
+    });
+  }
+
+  function showDone(d) {
+    const items = d.items || [];
+    if (!items.length) { addBot(d.say || '好了。'); return; }
+    let first = true;
+    items.forEach(it => {
+      const tag = it.ok ? '' : '没成功';
+      addBot(first ? (it.ok ? '办好了。' : '这条没办成。') : '', {
+        tag: tag || null,
+        out: it.text,
+        err: !it.ok
+      });
+      first = false;
+    });
+  }
+
+  let busy = false;
+
+  async function submit(text) {
+    text = (text || '').trim();
+    if (!text || busy) return;
+    busy = true;
+    send.disabled = true;
+    addMine(text);
+    input.value = '';
+    input.style.height = 'auto';
+
+    const thinking = addBot('嗯…', { tag: '正在理解' });
+    try {
+      const r = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text, direct: direct.checked })
+      });
+      const d = await r.json();
+      thinking.parentElement.remove();
+      if (!r.ok || d.ok === false) {
+        addBot(d.say || '请求出错。', { err: true });
+      } else if (d.kind === 'confirm') {
+        addConfirm(d);
+      } else if (d.kind === 'done') {
+        showDone(d);
+      } else if (d.kind === 'ask') {
+        addBot(d.say, {});
+      } else {
+        addBot(d.say || '…', {});
+      }
+    } catch (e) {
+      thinking.parentElement.remove();
+      addBot('连不上后台：' + e.message, { err: true });
+    }
+    busy = false;
+    send.disabled = false;
+    input.focus();
+  }
+
+  send.addEventListener('click', () => submit(input.value));
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      submit(input.value);
+    }
+  });
+  input.addEventListener('input', () => {
+    input.style.height = 'auto';
+    input.style.height = Math.min(140, input.scrollHeight) + 'px';
+  });
+
+  document.querySelectorAll('.chip').forEach(c => {
+    c.addEventListener('click', () => submit(c.textContent));
+  });
+
+  // 顶栏显示当前视频 / 登录态
+  function paint(s) {
+    const cur = s.current || {};
+    const title = cur.title || (s.player && s.player.title) || '';
+    const acc = s.account || {};
+    const who = acc.login ? (acc.uname || '已登录') : '未登录';
+    nowEl.innerHTML = '';
+    if (title) {
+      nowEl.appendChild(document.createTextNode('正在看 '));
+      const b = el('b', '', '《' + title + '》');
+      nowEl.appendChild(b);
+      nowEl.appendChild(document.createTextNode(' · ' + who));
+    } else {
+      nowEl.appendChild(document.createTextNode(who + ' · 还没打开视频'));
+    }
+  }
+
+  const es = new EventSource('/api/events');
+  es.onmessage = (ev) => {
+    try { paint(JSON.parse(ev.data)); } catch (e) {}
+  };
+  fetch('/api/state').then(r => r.json()).then(paint).catch(() => {});
+
+  input.focus();
+})();
+</script>
+</body>
+</html>

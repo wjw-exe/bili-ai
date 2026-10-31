@@ -495,10 +495,10 @@ class Core:
         pub = self.llm.public()
         st = self.roam._load()
         stats = pub.get("stats") or {}
-        from .llm import DEFAULT_ROAM_PROMPT
+        from .llm import DEFAULT_PROMPT, DEFAULT_ROAM_PROMPT
 
-        custom = bool(pub.get("roam_prompt")) and \
-            pub.get("roam_prompt") != DEFAULT_ROAM_PROMPT
+        custom_reply = pub.get("prompt") not in ("", None, DEFAULT_PROMPT)
+        custom_roam = pub.get("roam_prompt") not in ("", None, DEFAULT_ROAM_PROMPT)
         lines = [
             (f'llm: configured={int(pub.get("configured", False))}  '
              f'model={pub.get("model") or "-"}  base_url={pub.get("base_url") or "-"}'),
@@ -509,24 +509,27 @@ class Core:
             (f'ai_mode: {pub.get("mode")}  ({pub.get("mode_label")})  '
              f'-- {pub.get("mode_summary")}'),
             (f'roam: llm_draft={int(st["llm_draft"])}  '
-             f'llm_publish={int(st["llm_publish"])}  '
-             f'roam_prompt={"自定义" if custom else "默认"}'),
+             f'llm_publish={int(st["llm_publish"])}'),
+            (f'prompt: reply={"自定义" if custom_reply else "默认"}  '
+             f'roam={"自定义" if custom_roam else "默认"}'),
             (f'usage: drafted_today={stats.get("drafted_today", 0)}  '
              f'sent_today={stats.get("sent_today", 0)}  '
              f'last_error={stats.get("last_error") or "-"}'),
             ("actions: [llm_configure --api-key sk-xxx] [llm_configure --model gpt-4o-mini] "
              "[llm_configure --mode weak|full] "
-             "[llm_configure --roam-prompt \"...\"] [llm_test]"),
+             "[llm_configure --roam-prompt \"...\"] "
+             "[llm_configure --prompt \"\"]（空串=恢复默认提示词） [llm_test]"),
         ]
         return "\n".join(lines)
 
     async def cmd_llm_configure(self, api_key: str = "", base_url: str = "",
-                                model: str = "", roam_prompt: str = "",
-                                prompt: str = "", clear_key=None,
+                                model: str = "", roam_prompt: str | None = None,
+                                prompt: str | None = None, clear_key=None,
                                 mode: str = "") -> str:
         """配外部大模型（Key 只落本地 .data/llm.json，不进 git）
 
         mode: weak=只能发评论，full=除发视频外全功能；不传则不变
+        prompt / roam_prompt: 不传则不变；传空串 = 恢复代码里的默认提示词
         """
         kw = {}
         if api_key:
@@ -535,9 +538,9 @@ class Core:
             kw["base_url"] = base_url
         if model:
             kw["model"] = model
-        if roam_prompt:
+        if roam_prompt is not None:
             kw["roam_prompt"] = roam_prompt
-        if prompt:
+        if prompt is not None:
             kw["prompt"] = prompt
         if clear_key is not None:
             kw["clear_key"] = bool(clear_key)

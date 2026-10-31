@@ -191,7 +191,16 @@ class LLM:
         return cfg
 
     def _save(self) -> None:
-        _write_json(CFG_FILE, self._load())
+        # 只落「用户真自定义过」的东西：等于代码默认值的提示词不写文件。
+        # 否则任何一次配置改动都会把当时的默认文本抄进 llm.json，从此它就成了
+        # 「自定义值」——以后改 DEFAULT_PROMPT 对老配置再也不生效，状态里也不管
+        # 用户有没有动过，永远显示"自定义"。
+        cfg = dict(self._load())
+        if cfg["prompt"] == DEFAULT_PROMPT:
+            cfg.pop("prompt", None)
+        if cfg["roam_prompt"] == DEFAULT_ROAM_PROMPT:
+            cfg.pop("roam_prompt", None)
+        _write_json(CFG_FILE, cfg)
         self._cfg_mtime = self._mtime(CFG_FILE)
 
     def raw(self) -> dict:
@@ -237,10 +246,13 @@ class LLM:
                 cfg["base_url"] = str(kw["base_url"]).strip().rstrip("/")
             if "model" in kw and str(kw["model"] or "").strip():
                 cfg["model"] = str(kw["model"]).strip()
-            if "prompt" in kw and str(kw.get("prompt") or "").strip():
-                cfg["prompt"] = str(kw["prompt"]).strip()
-            if "roam_prompt" in kw and str(kw.get("roam_prompt") or "").strip():
-                cfg["roam_prompt"] = str(kw["roam_prompt"]).strip()
+            # 提示词：不传该键 = 保持不变；传空串 = 恢复代码默认（_save 会把它从
+            # llm.json 里剔除，从而继续跟随以后默认值的更新）
+            for k, dv in (("prompt", DEFAULT_PROMPT),
+                          ("roam_prompt", DEFAULT_ROAM_PROMPT)):
+                if k not in kw or kw[k] is None:
+                    continue
+                cfg[k] = str(kw[k]).strip() or dv
             for k in ("auto_draft", "auto_publish"):
                 if k in kw and kw[k] is not None:
                     cfg[k] = bool(kw[k])
@@ -345,15 +357,20 @@ class LLM:
             return b
         return b + "/chat/completions"
 
-    def chat(self, messages: list[dict], max_tokens: int = 256) -> str:
-        """同步调用（调用方用 asyncio.to_thread 包一层），返回正文字符串"""
+    def chat(self, messages: list[dict], max_tokens: int = 256,
+             temperature: float | None = None) -> str:
+        """同步调用（调用方用 asyncio.to_thread 包一层），返回正文字符串
+
+        temperature 不传时用配置里的值；打字控制这类「必须按格式出 JSON」的
+        调用会显式传 0.1，避免小模型自由发挥。
+        """
         cfg = self._load()
         if not cfg["api_key"]:
             raise LLMError("还没有填 API Key")
         body = json.dumps({
             "model": cfg["model"],
             "messages": messages,
-            "temperature": cfg["temperature"],
+            "temperature": cfg["temperature"] if temperature is None else temperature,
             "max_tokens": max_tokens,
             "stream": False,
         }, ensure_ascii=False).encode("utf-8")

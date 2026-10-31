@@ -271,7 +271,7 @@ MCP 工具、`main.py cli <cmd>`、`POST /api/cmd` 三者参数完全一致。
 | `roam_comment` | `task_id` `message` | 发布巡览评论（真实写，不可撤回，受每日上限） |
 | `roam_skip` | `task_id` `reason=manual` | 跳过某任务并记原因 |
 | `llm` | — | 外部大模型配置与用量（`llm_status` 同源）：模型、Key 掩码、今日拟稿 / 发送数、最近错误 |
-| `llm_configure` | `api_key=""` `base_url=""` `model=""` `roam_prompt=""` `prompt=""` `clear_key=null` | 配置 OpenAI 兼容大模型；Key 只落本地 `.data`，永不明文回显 |
+| `llm_configure` | `api_key=""` `base_url=""` `model=""` `roam_prompt=null` `prompt=null` `clear_key=null` | 配置 OpenAI 兼容大模型；`prompt` / `roam_prompt` 不传=不变，传空串 `""`=恢复内置默认；Key 只落本地 `.data`，永不明文回显 |
 | `llm_test` | — | 真打一次上游接口验证 Key / 地址 / 模型，不写任何 B 站数据 |
 | `upload_zones` | `top=0` | 列投稿分区（父分区 → tid 子分区），选 tid 用 |
 | `upload` | `file` `title` `tid` `desc=""` `tag=""` `cover=""` `copyright=1` `source=""` `confirm=false` | 投稿视频：**默认 dry-run 只预检**，`confirm=true` 才真上传 + 提交审核 |

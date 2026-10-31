@@ -153,7 +153,7 @@ actions: [play] [pause] [seek +/-sec] [comments --page] [subtitles] [upload --fi
 | 工具 | 参数 | 说明 |
 |---|---|---|
 | `llm_status` | — | 模型 / Key 掩码 / 今日拟稿与发送数 / 最近错误；**Key 永不明文回显** |
-| `llm_configure` | `api_key=""`, `base_url=""`, `model=""`, `roam_prompt=""`, `prompt=""`, `clear_key=None`, `mode=""` | 配置上游；`mode` 为内置 AI 的能力模式（`weak` 只发评论 / `full` 除发视频外全功能）；Key 只落本地 `.data`，不进仓库 |
+| `llm_configure` | `api_key=""`, `base_url=""`, `model=""`, `roam_prompt=None`, `prompt=None`, `clear_key=None`, `mode=""` | 配置上游；`prompt` / `roam_prompt` 不传=不变，传空串 `""`=恢复内置默认（默认值不会写进 `.data/llm.json`）；`mode` 为内置 AI 的能力模式（`weak` 只发评论 / `full` 除发视频外全功能）；Key 只落本地 `.data`，不进仓库 |
 | `llm_test` | — | 真打一次上游接口验证 Key / 地址 / 模型，**不写任何 B 站数据** |
 | `llm_audit` | `limit=20` | 内置 AI 最近的动作审计：命令 / 当时模式 / 放行或被拒 / 原因，最新在前 |
 

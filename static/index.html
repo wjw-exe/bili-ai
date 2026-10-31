@@ -362,6 +362,10 @@
   <span class="badge" id="mode">观察模式</span>
   <div class="spacer"></div>
   <div class="meta" id="meta">—</div>
+  <button class="wbtn" id="agentTop" style="margin-right:10px" onclick="location.href='/agent'"
+    title="自然语言直接操作：能连续多步，自己判断先搜还是先看评论">智能控制台</button>
+  <button class="wbtn" id="chatTop" style="margin-right:10px" onclick="location.href='/chat'"
+    title="打字下发指令：搜视频 / 发评论 / 回复消息">打字控制</button>
   <button class="wbtn" id="cmtAiTop" style="margin-right:10px"
     title="填 API Key，开启后自动回复「回复我的 / @我的」">AI 自动回复</button>
   <div id="acct"></div>
@@ -528,7 +532,7 @@
         <label>每日自动发送上限<input type="number" id="llmMax" min="0" step="1" value="20"
           title="0 表示不限"></label>
       </div>
-      <label>提示词（怎么回）
+      <label>提示词（怎么回；清空后保存 = 恢复默认）
         <textarea id="llmPrompt" rows="4" maxlength="1000"></textarea>
       </label>
       <label class="chk"><input type="checkbox" id="llmDraftOnly">只拟稿不发送（默认关＝生成后直接发出去）</label>
@@ -1567,6 +1571,17 @@ function renderLlm(l){
     const ms = $('#llmMode');
     if (ms && document.activeElement !== ms) ms.value = l.mode === 'full' ? 'full' : 'weak';
     refreshModeHint(l.mode);
+  }
+  // 智能控制台入口：弱模式直接灰掉，别让人点进去撞墙
+  const ag = $('#agentTop');
+  if (ag){
+    const on = l.mode === 'full';
+    ag.disabled = !on;
+    ag.style.opacity = on ? '' : '.45';
+    ag.style.cursor = on ? 'pointer' : 'not-allowed';
+    ag.title = on
+      ? '智能控制台：自然语言多步操作（搜索 → 打开 → 读评论 → 评论）'
+      : '智能控制台只在强模式开放，当前是弱模式（本地小模型）';
   }
   const st = l.stats || {};
   const cap = l.max_per_day || 0;

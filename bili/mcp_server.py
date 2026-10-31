@@ -305,19 +305,24 @@ async def llm_status() -> str:
 
 @mcp.tool()
 async def llm_configure(api_key: str = "", base_url: str = "", model: str = "",
-                        roam_prompt: str = "", prompt: str = "",
+                        roam_prompt: str | None = None, prompt: str | None = None,
                         clear_key: bool | None = None, mode: str = "") -> str:
-    """配置外部大模型：填 API Key / 接口地址 / 模型名 / 巡览专用提示词 / AI 能力模式。
+    """配置外部大模型：填 API Key / 接口地址 / 模型名 / 提示词 / AI 能力模式。
 
     api_key 留空表示不变；base_url 例 https://api.openai.com/v1 或任意 OpenAI 兼容地址；
-    model 例 gpt-4o-mini；roam_prompt 为「看视频写评论」的 system 提示词；
+    model 例 gpt-4o-mini；prompt 为「回复评论」的 system 提示词，
+    roam_prompt 为「看视频写评论」的 system 提示词；两者不传则不变，
+    传空串 "" 表示恢复内置默认提示词。
     clear_key=True 清空 Key。Key 只落本地 .data/llm.json。
     mode 填 weak 或 full（留空不改）：weak 只允许内置 AI 发评论 / 回复，
     full 除发视频外全部放行；发视频在两种模式下都永久关闭。"""
     args = {}
     for k, v in (("api_key", api_key), ("base_url", base_url), ("model", model),
-                 ("roam_prompt", roam_prompt), ("prompt", prompt), ("mode", mode)):
+                 ("mode", mode)):
         if v:
+            args[k] = v
+    for k, v in (("roam_prompt", roam_prompt), ("prompt", prompt)):
+        if v is not None:                    # 显式空串 = 恢复默认，必须透传
             args[k] = v
     if clear_key is not None:
         args["clear_key"] = clear_key

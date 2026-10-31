@@ -9,6 +9,7 @@ import base64
 import json
 import pathlib
 import time
+import uuid
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
@@ -37,6 +38,10 @@ web_core = Core()
 # 待扫码的二维码：qrcode_key -> 过期时间戳 / 二维码内容
 PENDING: dict[str, float] = {}
 _pending_url: dict[str, str] = {}
+
+# 打字控制待确认的写操作：token -> {cmds, 过期时间}
+_CHAT_TTL = 180
+_CHAT_PENDING: dict[str, dict] = {}
 
 app = FastAPI(title="bili-ai", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -152,6 +157,187 @@ async def api_cmd(request: Request) -> dict:
     # 而人点的按钮必须能立刻生效，故不套用 core.readonly。
     out = await web_core.execute(name, body.get("args") or {})
     return {"ok": not out.startswith(("ERR", "BAD", "HTTP", "NETWORK", "Runtime")), "out": out}
+
+
+# ---------------- 打字控制（自然语言 -> 命令） ----------------
+
+@app.get("/chat")
+async def chat_page() -> FileResponse:
+    """独立页面：对话式下发指令，和 index.html 的后台面板互补"""
+    return FileResponse(STATIC / "chat.html", headers={"Cache-Control": "no-store"})
+
+
+def _chat_ctx() -> dict:
+    """解析用到的现场：当前视频 + 收件箱（回复第 N 条要靠它定位 msg_id）"""
+    with store.lock:
+        cur = dict(store.current or {})
+        items = [dict(m) for m in (store.inbox.get("items") or [])]
+        title = cur.get("title") or store.player.title or ""
+        bvid = cur.get("bvid") or store.player.bvid or ""
+    return {"bvid": bvid, "title": title, "inbox": items}
+
+
+def _chat_llm():
+    """本地模型可用才返回实例；没配就纯规则跑，功能不受影响"""
+    try:
+        from .llm import get_llm
+
+        inst = get_llm()
+        if not (inst.raw().get("api_key") or ""):
+            return None
+        return inst
+    except Exception:                            # noqa: BLE001
+        return None
+
+
+async def _chat_run(cmds: list[dict]) -> list[dict]:
+    from . import chatcmd
+
+    outs: list[dict] = []
+    for c in cmds:
+        name = str(c.get("name") or "")
+        args = dict(c.get("args") or {})
+        if name == "triple":
+            seq = [("like", {"bvid": args.get("bvid"), "on": True}),
+                   ("coin", {"bvid": args.get("bvid"), "n": 2}),
+                   ("fav", {"bvid": args.get("bvid")})]
+        else:
+            seq = [(name, args)]
+        for n, a in seq:
+            if n not in ALLOWED:
+                outs.append({"name": n, "ok": False, "text": f"不支持的命令：{n}"})
+                continue
+            if n == "danmaku":
+                a["confirm"] = True              # 走到这里说明用户已经点过确认
+            out = await web_core.execute(n, a)
+            ok = not out.startswith(("ERR", "BAD", "HTTP", "NETWORK", "Runtime"))
+            outs.append({"name": n, "ok": ok, "text": chatcmd.summarize(n, out)})
+    return outs
+
+
+@app.post("/api/chat")
+async def api_chat(request: Request) -> dict:
+    from . import chatcmd
+
+    body = await _body(request)
+    text = str(body.get("text") or "").strip()
+    if not text:
+        return {"ok": False, "say": "说点什么，比如「搜 嵌入式开发」。"}
+    text = text[:500]
+    res = await chatcmd.aparse(_chat_llm(), text, _chat_ctx())
+    kind = res.get("kind")
+    if kind != "cmd":
+        return {"ok": True, "kind": kind or "chat",
+                "say": res.get("say") or "这句我没听明白。",
+                "source": res.get("source")}
+    cmds = res.get("cmds") or []
+    # 写操作默认不直接发：先回预览 + 一次性 token，用户点了才执行
+    if res.get("write") and not bool(body.get("direct")):
+        now = time.time()
+        for k in [k for k, v in _CHAT_PENDING.items() if v["exp"] < now]:
+            _CHAT_PENDING.pop(k, None)
+        token = uuid.uuid4().hex[:16]
+        _CHAT_PENDING[token] = {"cmds": cmds, "exp": now + _CHAT_TTL}
+        return {"ok": True, "kind": "confirm", "token": token,
+                "preview": res.get("preview"), "labels": res.get("labels"),
+                "source": res.get("source")}
+    items = await _chat_run(cmds)
+    return {"ok": True, "kind": "done", "items": items,
+            "preview": res.get("preview"), "labels": res.get("labels"),
+            "source": res.get("source")}
+
+
+@app.post("/api/chat/exec")
+async def api_chat_exec(request: Request) -> dict:
+    body = await _body(request)
+    item = _CHAT_PENDING.pop(str(body.get("token") or ""), None)
+    if not item or float(item.get("exp") or 0) < time.time():
+        return {"ok": False, "say": "这条指令已经过期了，重新说一遍。"}
+    return {"ok": True, "kind": "done", "items": await _chat_run(item["cmds"])}
+
+
+# ---------------- 智能控制台（强模型 + 工具调用） ----------------
+
+@app.get("/agent")
+async def agent_page() -> FileResponse:
+    """强模型控制台：自然语言直接操作，弱模式不给开"""
+    return FileResponse(STATIC / "agent.html", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/agent")
+async def api_agent() -> dict:
+    from . import agent as ag
+
+    ok, why = ag.ready()
+    return {"ok": True, "ready": ok, "reason": why, "cfg": ag.public_cfg(),
+            "tools": ag.T.TOOL_NAMES, "schema": ag.T.schema()}
+
+
+@app.post("/api/agent")
+async def api_agent_set(request: Request) -> dict:
+    from . import agent as ag
+
+    body = await _body(request)
+    cfg = ag.save_cfg(body)
+    ok, why = ag.ready()
+    return {"ok": True, "msg": "已保存", "cfg": cfg, "ready": ok, "reason": why}
+
+
+@app.post("/api/agent/run")
+async def api_agent_run(request: Request) -> dict:
+    from . import agent as ag
+
+    body = await _body(request)
+    try:
+        return await ag.run(web_core, store, body.get("messages") or [],
+                            bool(body.get("auto_confirm")))
+    except ag.AgentError as e:
+        return {"ok": False, "say": str(e)}
+
+
+@app.post("/api/agent/exec")
+async def api_agent_exec(request: Request) -> dict:
+    from . import agent as ag
+
+    body = await _body(request)
+    return await ag.confirm(web_core, str(body.get("token") or ""))
+
+
+@app.get("/api/agent/events")
+async def api_agent_events(days: int = 1, action: str = "", only_fail: int = 0) -> dict:
+    """P0 观测：事件聚合 + 明细 + 存储占用"""
+    from . import events as ev
+    from . import refstore as rs
+
+    return {"ok": True, "summary": ev.summary(days=max(1, min(int(days or 1), 30))),
+            "events": ev.query(action=action, only_fail=bool(only_fail), limit=60),
+            "refs": rs.usage(), "storage": ev.stats()}
+
+
+@app.get("/api/agent/plans")
+async def api_agent_plans() -> dict:
+    from . import orchestrator as orc
+
+    return {"ok": True, "plans": orc.board()}
+
+
+@app.post("/api/agent/plan")
+async def api_agent_plan_new(request: Request) -> dict:
+    from . import orchestrator as orc
+
+    body = await _body(request)
+    plan = orc.create(str(body.get("goal") or ""), body.get("steps") or [],
+                      plan_id=str(body.get("plan_id") or ""))
+    return {"ok": True, "plan": plan}
+
+
+@app.post("/api/agent/plan/run")
+async def api_agent_plan_run(request: Request) -> dict:
+    from . import orchestrator as orc
+
+    body = await _body(request)
+    return await orc.run(web_core, store, str(body.get("plan_id") or ""),
+                         confirmed_writes=bool(body.get("confirmed")))
 
 
 # ---------------- 消息收件箱（回复我的 / @我的） ----------------
