@@ -111,7 +111,8 @@ class AutoReply:
             return {"ok": False, "msg": "回复内容不能为空"}
         if not self.llm.quota_ok():
             return {"ok": False, "msg": "已到今日自动发送上限"}
-        out = await self.core.execute("reply", {"msg_id": str(msg_id), "message": text})
+        out = await self.core.execute("reply", {"msg_id": str(msg_id), "message": text},
+                                      actor="ai")
         ok = out.startswith("ok")
         if ok:
             self.llm.bump("sent")
@@ -161,7 +162,7 @@ class AutoReply:
                     d = drafts[mid]
                 if cfg["auto_publish"] and self.llm.quota_ok():
                     out = await self.core.execute(
-                        "reply", {"msg_id": mid, "message": d["text"]})
+                        "reply", {"msg_id": mid, "message": d["text"]}, actor="ai")
                     if out.startswith("ok"):
                         self.llm.bump("sent")
                         res["sent"] += 1

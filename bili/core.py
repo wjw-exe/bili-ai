@@ -3,10 +3,13 @@
 import asyncio
 import time
 
-from . import fmt
+from . import fmt, modes
 from .api import Bili
 from .http import NeedLogin
 from .store import store
+
+# 这些 actor 视为「自己配 API 的 AI」，按 modes.py 的能力模式限权
+AI_ACTORS = ("ai", "llm", "agent")
 
 
 class Core:
@@ -17,24 +20,50 @@ class Core:
 
     # ---------------- 命令 ----------------
 
-    async def execute(self, name: str, args: dict) -> str:
+    async def execute(self, name: str, args: dict, actor: str = "user") -> str:
+        """运行命令。actor="ai" 时先按 AI 能力模式（弱/强）守门，再执行。
+
+        限权只在这一处做：人（web / CLI / MCP）走 actor="user" 不受模式约束，
+        配了 API Key 的内置 AI（autoreply / roam 自动发布）走 actor="ai"。
+        """
+        a_args = dict(args or {})
+        ai_mode = ""
+        if str(actor or "").strip().lower() in AI_ACTORS:
+            ai_mode = modes.current()
+            deny = modes.check(ai_mode, name, a_args)
+            if deny:
+                modes.audit(name, ai_mode, False, deny)
+                store.note(name, False, deny)
+                return deny
+            a_args, dropped = modes.filter_args(name, a_args)
+            if dropped:
+                modes.audit(name, ai_mode, True, "忽略受限字段: " + "/".join(dropped))
         try:
             # 后台扫码登录会改写 .data/cookie.json，跑命令前热重载一次
             self.bili.http.sync_from_disk()
-            out = await getattr(self, f"cmd_{name}")(**args)
-            store.note(name, True, out.splitlines()[0] if out else "")
+            out = await getattr(self, f"cmd_{name}")(**a_args)
+            first = out.splitlines()[0] if out else ""
+            store.note(name, True, first)
+            if ai_mode:
+                modes.audit(name, ai_mode, True, first)
             return out
         except TypeError as e:
             msg = f"BAD_ARGS: {e}"
             store.note(name, False, msg)
+            if ai_mode:
+                modes.audit(name, ai_mode, False, msg)
             return msg
         except NeedLogin as e:
             msg = f"ERR_NEED_LOGIN: {e.msg}（后台扫码登录，或 python main.py login）"
             store.note(name, False, msg)
+            if ai_mode:
+                modes.audit(name, ai_mode, False, msg)
             return msg
         except Exception as e:
             msg = f"{type(e).__name__}: {e}"
             store.note(name, False, msg)
+            if ai_mode:
+                modes.audit(name, ai_mode, False, msg)
             return msg
 
     async def cmd_search(self, keyword: str, page: int = 1, limit: int = 10) -> str:
@@ -477,6 +506,8 @@ class Core:
              f'auto_draft={int(bool(pub.get("auto_draft")))}  '
              f'auto_publish={int(bool(pub.get("auto_publish")))}  '
              f'max_per_day={pub.get("max_per_day")}'),
+            (f'ai_mode: {pub.get("mode")}  ({pub.get("mode_label")})  '
+             f'-- {pub.get("mode_summary")}'),
             (f'roam: llm_draft={int(st["llm_draft"])}  '
              f'llm_publish={int(st["llm_publish"])}  '
              f'roam_prompt={"自定义" if custom else "默认"}'),
@@ -484,14 +515,19 @@ class Core:
              f'sent_today={stats.get("sent_today", 0)}  '
              f'last_error={stats.get("last_error") or "-"}'),
             ("actions: [llm_configure --api-key sk-xxx] [llm_configure --model gpt-4o-mini] "
+             "[llm_configure --mode weak|full] "
              "[llm_configure --roam-prompt \"...\"] [llm_test]"),
         ]
         return "\n".join(lines)
 
     async def cmd_llm_configure(self, api_key: str = "", base_url: str = "",
                                 model: str = "", roam_prompt: str = "",
-                                prompt: str = "", clear_key=None) -> str:
-        """配外部大模型（Key 只落本地 .data/llm.json，不进 git）"""
+                                prompt: str = "", clear_key=None,
+                                mode: str = "") -> str:
+        """配外部大模型（Key 只落本地 .data/llm.json，不进 git）
+
+        mode: weak=只能发评论，full=除发视频外全功能；不传则不变
+        """
         kw = {}
         if api_key:
             kw["api_key"] = api_key
@@ -505,6 +541,8 @@ class Core:
             kw["prompt"] = prompt
         if clear_key is not None:
             kw["clear_key"] = bool(clear_key)
+        if mode:
+            kw["mode"] = mode
         if not kw:
             return self.llm.public().__str__()
         msg = self.llm.configure(**kw)

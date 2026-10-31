@@ -587,7 +587,7 @@ class Roam:
                 if not llm.quota_ok():
                     out["msgs"].append("  -> 未发送（llm 每日发送上限已到，草稿留着）")
                     continue
-                r = await self.publish(tid, text)
+                r = await self.publish(tid, text, by="llm", actor="ai")
                 if r.get("ok"):
                     out["published"] += 1
                     llm.bump("sent")
@@ -949,10 +949,13 @@ class Roam:
             lines.append(hint)
         return "\n".join(lines)
 
-    async def publish(self, task_id: str, text: str, by: str = "") -> dict:
+    async def publish(self, task_id: str, text: str, by: str = "",
+                      actor: str = "user") -> dict:
         """回填文案并发布（默认先审后发）。返回 {ok, msg, task}
 
         by: 文案来源（llm / agent / human），只做记录，不影响发布逻辑。
+        actor: "ai" 表示这条是内置 AI 自己发的，先过 AI 能力模式守门
+        （autodraft 自动发布走这条路；人点「发送」是 actor="user" 不受限）。
         并发保护：除了本实例的 _busy，再用跨进程文件锁 + sending 占位，
         防止 web loop 与 MCP/CLI 同时通过 waiting 检查、对同一条视频发两条评论。
         """
@@ -961,6 +964,14 @@ class Roam:
             return {"ok": False, "msg": "ERR_NEED_TEXT: 评论内容不能为空"}
         if len(msg) > 1000:
             return {"ok": False, "msg": "ERR_TEXT_TOO_LONG: 超过 1000 字上限"}
+        if str(actor or "").strip().lower() in ("ai", "llm", "agent"):
+            from . import modes
+
+            mode = modes.current()
+            deny = modes.check(mode, "roam_send")
+            if deny:
+                modes.audit("roam_send", mode, False, deny)
+                return {"ok": False, "msg": deny}
         try:
             with _FileLock(PUB_LOCK_FILE):
                 self._state = None                   # 强制重读：别的进程可能刚发过

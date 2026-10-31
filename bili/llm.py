@@ -20,6 +20,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from . import modes
+
 DATA_DIR = Path(__file__).resolve().parent.parent / ".data"
 CFG_FILE = DATA_DIR / "llm.json"
 STATE_FILE = DATA_DIR / "llm_state.json"
@@ -180,6 +182,8 @@ class LLM:
             "interval": int(raw.get("interval") or 600),
             "max_per_day": int(raw.get("max_per_day") or 20),
             "temperature": float(raw.get("temperature") or 0.8),
+            # 能力模式：weak=只能发评论，full=除发视频外全功能
+            "mode": modes.normalize(raw.get("mode")),
         }
         if cfg["interval"] < 60:
             cfg["interval"] = 60
@@ -211,6 +215,10 @@ class LLM:
                 "interval": cfg["interval"],
                 "max_per_day": cfg["max_per_day"],
                 "temperature": cfg["temperature"],
+                "mode": cfg["mode"],
+                "mode_label": modes.LABELS[cfg["mode"]],
+                "mode_summary": modes.SUMMARIES[cfg["mode"]],
+                "capabilities": modes.capabilities(cfg["mode"]),
                 "stats": st,
             }
 
@@ -251,6 +259,12 @@ class LLM:
                     cfg["temperature"] = min(2.0, max(0.0, float(kw["temperature"])))
                 except (TypeError, ValueError):
                     pass
+            if kw.get("mode") is not None and str(kw["mode"]).strip():
+                raw_mode = str(kw["mode"]).strip().lower()
+                if raw_mode not in modes.MODES:
+                    return (f"ERR_BAD_MODE: {raw_mode}  可选 "
+                            + "/".join(modes.MODES))
+                cfg["mode"] = raw_mode
             if cfg["auto_publish"] and not cfg["api_key"]:
                 cfg["auto_publish"] = False
                 self._save()

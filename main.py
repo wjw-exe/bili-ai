@@ -48,8 +48,11 @@ def _parse_cli(cmd: str, rest: list[str]) -> dict:
                 v = rest[i + 1]
                 if key == "at" and cmd != "danmaku":
                     args[key] = float(v)
-                elif key in ("page", "limit", "offset", "mode", "fontsize"):
+                elif key in ("page", "limit", "offset", "fontsize"):
                     args[key] = int(v)
+                elif key == "mode":
+                    # danmaku --mode 是数字（弹幕类型），llm_configure --mode 是 weak/full
+                    args[key] = int(v) if v.isdigit() else v
                 elif key in ("around", "window"):
                     args[key] = float(v)
                 else:

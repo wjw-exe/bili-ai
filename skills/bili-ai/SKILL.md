@@ -153,8 +153,9 @@ actions: [play] [pause] [seek +/-sec] [comments --page] [subtitles] [upload --fi
 | 工具 | 参数 | 说明 |
 |---|---|---|
 | `llm_status` | — | 模型 / Key 掩码 / 今日拟稿与发送数 / 最近错误；**Key 永不明文回显** |
-| `llm_configure` | `api_key=""`, `base_url=""`, `model=""`, `roam_prompt=""`, `prompt=""`, `clear_key=None` | 配置上游；Key 只落本地 `.data`，不进仓库 |
+| `llm_configure` | `api_key=""`, `base_url=""`, `model=""`, `roam_prompt=""`, `prompt=""`, `clear_key=None`, `mode=""` | 配置上游；`mode` 为内置 AI 的能力模式（`weak` 只发评论 / `full` 除发视频外全功能）；Key 只落本地 `.data`，不进仓库 |
 | `llm_test` | — | 真打一次上游接口验证 Key / 地址 / 模型，**不写任何 B 站数据** |
+| `llm_audit` | `limit=20` | 内置 AI 最近的动作审计：命令 / 当时模式 / 放行或被拒 / 原因，最新在前 |
 
 ### 投稿（不可撤回）
 | 工具 | 参数 | 说明 |
@@ -224,6 +225,15 @@ actions: [play] [pause] [seek +/-sec] [comments --page] [subtitles] [upload --fi
 | `21564` 投稿过于频繁 | 频率限制，**每次提交都算一次投稿** | 停止重试，等数十分钟以上 |
 | `21540` 需网页端人工过校 | 稿件被要求人工审核 | 交给用户走网页端 |
 | `preupload HTTP 406 code=601「您上传视频过快」` | 上传通道风控冷却 | 不重试，等冷却；可换网页端上传 |
+
+## 7.5 AI 能力模式（跟你有关，也跟你无关）
+
+`weak` / `full` 约束的是**用户自己配了 Key 的内置 AI**（收件箱自动回复、巡览拟稿/自动发布），
+它们在调 `Core.execute` 时带 `actor="ai"`，越权会直接返回 `ERR_AI_MODE_DENIED`。
+
+通过 MCP 接入的你（外部客户端）走 `actor="user"`，**不受该模式限制**；但发视频永远要人确认，
+不要因为"用户开了强模式"就去点赞投币。看到 `ERR_AI_MODE_DENIED` 时的正确反应：告诉用户
+「这动作被当前 AI 模式拦了，需要切强模式」，**不要**试图用别的命令绕过去，也不要替用户改 `mode`。
 
 ## 8. 写操作纪律（硬规则）
 

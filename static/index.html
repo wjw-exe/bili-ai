@@ -516,6 +516,13 @@
         <input type="password" id="llmKey" autocomplete="off" spellcheck="false"
           placeholder="粘贴 sk-… 后点「保存并开启」，回复会自动发出">
       </label>
+      <label>AI 能力模式（决定这个 AI 能干什么）
+        <select id="llmMode">
+          <option value="weak">弱模式 · 只能发评论 / 回复</option>
+          <option value="full">强模式 · 除发视频外全功能</option>
+        </select>
+      </label>
+      <div class="hint" id="llmModeHint">弱模式：只允许发评论与回复；点赞、投币、收藏、弹幕、巡览评论一律拒绝，发视频永久关闭。</div>
       <div class="two">
         <label>轮询间隔(分钟)<input type="number" id="llmInt" min="1" step="1" value="5"></label>
         <label>每日自动发送上限<input type="number" id="llmMax" min="0" step="1" value="20"
@@ -1557,6 +1564,9 @@ function renderLlm(l){
     llmSetVal('#llmPrompt', l.prompt || LLM_DEF_PROMPT);
     const do_ = $('#llmDraftOnly');
     if (document.activeElement !== do_) do_.checked = l.configured ? !l.auto_publish : false;
+    const ms = $('#llmMode');
+    if (ms && document.activeElement !== ms) ms.value = l.mode === 'full' ? 'full' : 'weak';
+    refreshModeHint(l.mode);
   }
   const st = l.stats || {};
   const cap = l.max_per_day || 0;
@@ -1571,19 +1581,21 @@ function renderLlm(l){
   const box = $('#llmNow');
   if (box){
     const mins = Math.max(1, Math.round((l.interval || 300) / 60));
+    const ml = l.mode === 'full' ? '强模式' : '弱模式';
+    const mtag = ` · <b>${ml}</b>`;
     if (!l.configured){
       box.style.background = '#fff8e6'; box.style.borderColor = '#ffe0a3';
-      box.innerHTML = '<b>未配置</b> · 粘贴 API Key → 点「保存并开启」，之后自动回复「回复我的 / @我的」';
+      box.innerHTML = '<b>未配置</b> · 粘贴 API Key → 选模式 → 点「保存并开启」，之后自动回复「回复我的 / @我的」';
     } else if (l.auto_publish){
       box.style.background = '#eefcf1'; box.style.borderColor = '#b7ecc4';
-      box.innerHTML = `<b>自动回复运行中</b> · 每 ${mins} 分钟检查一次 · 未回复的直接发出`
+      box.innerHTML = `<b>自动回复运行中</b>${mtag} · 每 ${mins} 分钟检查一次 · 未回复的直接发出`
         + ` · 今日已发 <b>${st.sent_today || 0}</b>${cap ? '/' + cap : ''}`;
     } else if (l.auto_draft){
       box.style.background = '#f2f8ff'; box.style.borderColor = '#cfe6ff';
-      box.innerHTML = `<b>只拟稿模式</b> · 每 ${mins} 分钟生成草稿，不自动发送`;
+      box.innerHTML = `<b>只拟稿模式</b>${mtag} · 每 ${mins} 分钟生成草稿，不自动发送`;
     } else {
       box.style.background = '#fff8e6'; box.style.borderColor = '#ffe0a3';
-      box.innerHTML = '<b>Key 已存但未开启</b> · 取消勾选「只拟稿不发送」后保存即自动回复';
+      box.innerHTML = '<b>Key 已存但未开启</b>' + mtag + ' · 取消勾选「只拟稿不发送」后保存即自动回复';
     }
   }
   const btn = $('#cmtAi');
@@ -1616,6 +1628,7 @@ async function saveLlm(extra, okMsg){
     prompt: ($('#llmPrompt').value || '').trim(),
     auto_draft: true,
     auto_publish: !$('#llmDraftOnly').checked,
+    mode: ($('#llmMode') && $('#llmMode').value) || 'weak',
   }, extra || {});
   const key = ($('#llmKey').value || '').trim();
   if (key) body.api_key = key;
@@ -1629,6 +1642,15 @@ async function saveLlm(extra, okMsg){
   if (okMsg) toast(okMsg);
   return j;
 }
+
+function refreshModeHint(mode){
+  const el = $('#llmModeHint');
+  if (!el) return;
+  el.innerHTML = (mode === 'full')
+    ? '强模式：除发视频外的命令全部放行（点赞 / 投币 / 收藏 / 弹幕 / 巡览评论 / 改配置），发视频永久关闭。'
+    : '弱模式：只允许发评论与回复；点赞、投币、收藏、弹幕、巡览评论一律拒绝，发视频永久关闭。';
+}
+if ($('#llmMode')) $('#llmMode').onchange = e => refreshModeHint(e.target.value);
 
 $('#cmtAi').onclick = openLlm;
 $('#cmtAiTop').onclick = openLlm;

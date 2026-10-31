@@ -15,7 +15,7 @@ B 站客户端的 **headless 内核 + 双前端**：AI 走 MCP / CLI / HTTP 操�
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
-![MCP](https://img.shields.io/badge/MCP-35%20tools-00aeec)
+![MCP](https://img.shields.io/badge/MCP-36%20tools-00aeec)
 ![No API Key](https://img.shields.io/badge/API%20Key-not%20required-success)
 
 ```bash
@@ -32,7 +32,7 @@ python main.py serve             # → http://127.0.0.1:8770
 [安装](#安装) 与 [启动不起来？](#启动不起来)。
 
 ```
-        ┌──────────── MCP（35 工具） / CLI / HTTP ────────────┐
+        ┌──────────── MCP（36 工具） / CLI / HTTP ────────────┐
         │                                                     ▼
    AI 客户端 ──► core.execute(name, args) ───────────► StateStore（唯一真相源）
                                                              │
@@ -92,9 +92,10 @@ bili-ai 的三条设计原则：
 | `bili/fmt.py` | 文本展现层（表格化紧凑输出） |
 | `bili/core.py` | 命令总线，MCP / Web / CLI 共用同一 `execute` |
 | `bili/upload.py` | 投稿链路：preupload → upos 分片上传 / 合并 → 封面上传 → web add 提交审核 |
-| `bili/mcp_server.py` | MCP stdio 层，**35 个工具** |
+| `bili/mcp_server.py` | MCP stdio 层，**36 个工具** |
 | `bili/inbox.py` | 消息收件箱：拉 `msgfeed/reply` + `msgfeed/at`、归一化、baseline、回复记账 |
 | `bili/llm.py` | 外部大模型接入（可选）：`base_url` / `model` / `api_key` 配置与连通性测试，供自动回复 / 巡览拟稿调用 |
+| `bili/modes.py` | AI 能力模式（弱 / 强）：动作白黑名单、AI 自提权防护、`.data/ai_audit.jsonl` 审计 |
 | `bili/autoreply.py` | 自动回复：后台轮询收件箱 → 取待回消息 → 大模型拟稿 → 回填 / 发送（默认关闭） |
 | `bili/roam.py` | AI 巡览：取片 → 过滤已见 → 读字幕 → 落 waiting 任务 → 发布 / 跳过 |
 | `bili/web.py` | FastAPI 后台 + SSE + 图床代理 + 扫码登录 + 收件箱 / 巡览 / 大模型接口 |
@@ -176,7 +177,7 @@ INFO:     Uvicorn running on http://127.0.0.1:8770 (Press CTRL+C to quit)
 ```
 
 浏览器打开 `http://127.0.0.1:8770` 能看到三栏后台（Now Playing / 搜索·评论·字幕 / Command Log）即正常。
-MCP 侧另测一条：`python main.py mcp --no-web` 后由客户端 `initialize` + `tools/list` 应返回 35 个工具。
+MCP 侧另测一条：`python main.py mcp --no-web` 后由客户端 `initialize` + `tools/list` 应返回 36 个工具。
 
 ### 接到 MCP 客户端
 
@@ -437,6 +438,8 @@ python main.py logout   # 删除本地 cookie.json
 | `cookie.json` | 登录态（仅 bilibili 域，权限 0600） |
 | `inbox.json` | 收件箱 baseline + 已回复记账（防重复回同一条） |
 | `roam.json` | 巡览配置、seen_bvid、任务列表、统计（picked / sent / skipped / failed / today_sent） |
+| `llm.json` | 外部大模型配置（`base_url` / `model` / `api_key` / `mode` 等，Key 明文只在本机） |
+| `ai_audit.jsonl` | 内置 AI 的动作审计（命令 / 模式 / 放行与否 / 原因，最多保留最近 500 条） |
 | `subs/` | `subtitle --export` 导出的字幕文件 |
 
 `inbox.json` / `roam.json` 同时被 `store` 镜像，因此 MCP 侧发的回复、网页侧点的按钮，
@@ -453,6 +456,38 @@ python main.py logout   # 删除本地 cookie.json
 
 巡览器另有自己的节流：频率硬下限 120 秒、一轮最多试 8 个候选、每片只处理一次，
 避免"自动化"把账号跑进风控。
+
+## AI 能力模式（弱 / 强）
+
+填了 API Key 的那个内置 AI（自动回复 / 巡览拟稿）究竟能干什么，由 `.data/llm.json` 里的 `mode`
+决定，**默认 weak**：
+
+| 模式 | 能干什么 | 不能干什么 |
+|---|---|---|
+| `weak` 弱模式（默认） | 发评论、回复消息、巡览发评论；搜索 / 看视频 / 读评论字幕弹幕 / 看任务状态等只读操作 | 点赞、投币、收藏、取消收藏、发弹幕、改巡览配置、改 AI 参数 |
+| `full` 强模式 | 以上全部 + 点赞 / 投币 / 收藏 / 发弹幕 / 巡览批量发布 / 改 AI 参数 | 发视频（两种模式都**永久关闭**） |
+
+三条硬护栏，任何模式都不放开：
+
+1. `upload`（发视频）AI 永远不能调，只能人自己点；
+2. AI 改不了自己的 `mode` / `api_key` / `clear_key`——强模式下调 `llm_configure` 时这几个字段
+   直接被剔除，防"自己给自己提权"；
+3. 未知动作 fail-closed：弱模式拒绝，强模式放行（新加的功能不阻塞强模式）。
+
+三种等价设定方式：
+
+```powershell
+python main.py cli llm_configure --mode full     # 命令行
+```
+
+- 后台：AI 自动回复弹窗里的「AI 能力模式」下拉；
+- MCP：`llm_configure(mode="full")`。
+
+限权点只有一处：`Core.execute(actor="ai")`。后台按钮 / CLI / 外部 MCP 客户端走 `actor="user"`，
+**不受模式限制**——模式约束的是"你自己配了 Key 的那个 AI"，不是你自己。
+
+每次 AI 动作都落一行 `.data/ai_audit.jsonl`（命令 / 当时模式 / 放行或被拒 / 原因），
+`GET /api/llm/audit?n=20` 或 MCP 的 `llm_audit` 可回查，事后能说清 AI 到底动过什么。
 
 ## 安全与边界
 
@@ -502,6 +537,7 @@ python main.py selftest
 | v0.4.1 | 评论真分页：`/x/v2/reply`（pn/ps）→ `/x/v2/reply/wbi/main` 游标 → plain main 三级降级；置顶只在首页保留并去重（字段 `top`，后台显示「置顶」标）；深翻页空列表收口 `is_end`；新增 `tests/` 离线回归（7 例） |
 | v0.6.0 | 弹幕：`danmaku_list`（读当前 P 弹幕，`around` + `window` 时间窗、分页游标）、`danmaku`（发弹幕，100 字 / 滚动·顶部·底部 / `#RRGGBB` 颜色，默认 dry-run，`confirm=true` 才发）；后台新增「弹幕」面板（时间轴列表 + 发送条，发送前二次确认）；离线回归新增 13 例；MCP 工具由 33 增至 35 |
 | v0.5.0 | 接入外部大模型（OpenAI 兼容，Key 只落本地）：`llm` / `llm_configure` / `llm_test`；收件箱自动回复轮询（填 Key 即用，默认关闭）；巡览拟稿 `roam_draft` / `roam_draft_set` / `roam_send`，草稿来源隔离与跨进程并发仲裁；MCP 工具由 26 增至 33 |
+| v0.7.0 | AI 能力模式：`bili/modes.py` + `llm.json` 的 `mode` 字段。弱模式只放评论/回复，强模式除发视频外全放；发视频对 AI 永久关闭，AI 不能改自己的 `mode` / `api_key`（防自提权）；AI 动作落 `.data/ai_audit.jsonl` 并可经 `/api/llm/audit`、MCP `llm_audit` 回查；后台 AI 弹窗新增模式下拉；离线回归新增 11 例 |
 
 ## License
 

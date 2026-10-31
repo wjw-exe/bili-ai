@@ -306,20 +306,43 @@ async def llm_status() -> str:
 @mcp.tool()
 async def llm_configure(api_key: str = "", base_url: str = "", model: str = "",
                         roam_prompt: str = "", prompt: str = "",
-                        clear_key: bool | None = None) -> str:
-    """配置外部大模型：填 API Key / 接口地址 / 模型名 / 巡览专用提示词。
+                        clear_key: bool | None = None, mode: str = "") -> str:
+    """配置外部大模型：填 API Key / 接口地址 / 模型名 / 巡览专用提示词 / AI 能力模式。
 
     api_key 留空表示不变；base_url 例 https://api.openai.com/v1 或任意 OpenAI 兼容地址；
     model 例 gpt-4o-mini；roam_prompt 为「看视频写评论」的 system 提示词；
-    clear_key=True 清空 Key。Key 只落本地 .data/llm.json。"""
+    clear_key=True 清空 Key。Key 只落本地 .data/llm.json。
+    mode 填 weak 或 full（留空不改）：weak 只允许内置 AI 发评论 / 回复，
+    full 除发视频外全部放行；发视频在两种模式下都永久关闭。"""
     args = {}
     for k, v in (("api_key", api_key), ("base_url", base_url), ("model", model),
-                 ("roam_prompt", roam_prompt), ("prompt", prompt)):
+                 ("roam_prompt", roam_prompt), ("prompt", prompt), ("mode", mode)):
         if v:
             args[k] = v
     if clear_key is not None:
         args["clear_key"] = clear_key
     return await core.execute("llm_configure", args)
+
+
+@mcp.tool()
+async def llm_audit(limit: int = 20) -> str:
+    """查看内置 AI 最近的自动动作记录：执行了什么命令、当时是什么模式、放行还是被拒、原因。
+
+    limit 为条数（1..200，默认 20），返回最新的在前。配了 Key 后 AI 自己动过什么，看这里。"""
+    from . import modes
+
+    n = max(1, min(int(limit or 20), 200))
+    items = modes.tail(n)
+    head = (f'ai_mode: {modes.current()}  ({modes.label()})\n'
+            f'audit: {len(items)} 条（最新在前）')
+    if not items:
+        return head + "\n（还没有记录：AI 没动过，或动作都由人触发）"
+    lines = [head]
+    for it in items:
+        flag = "OK " if it.get("allowed") else "DENY"
+        lines.append(f'{it.get("ts", "")}  {flag}  {it.get("action", "")}'
+                     f'  [{it.get("mode", "")}]  {str(it.get("detail", ""))[:120]}')
+    return "\n".join(lines)
 
 
 @mcp.tool()

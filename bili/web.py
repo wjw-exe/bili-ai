@@ -216,7 +216,7 @@ async def api_llm_set(request: Request) -> dict:
     llm = _web_ar().llm
     kw = {k: b.get(k) for k in ("base_url", "model", "prompt", "roam_prompt",
                                 "auto_draft", "auto_publish", "interval",
-                                "max_per_day", "temperature") if k in b}
+                                "max_per_day", "temperature", "mode") if k in b}
     key = str(b.get("api_key") or "").strip()
     if key:
         kw["api_key"] = key
@@ -244,6 +244,14 @@ async def api_llm_test() -> dict:
     r = await asyncio.to_thread(_web_ar().llm.test)
     _LLM_CACHE["t"] = 0.0
     return {**r, "llm": _llm_view()}
+
+
+@app.get("/api/llm/audit")
+async def api_llm_audit(n: int = 20) -> dict:
+    """最近若干条 AI 动作记录（模式 / 放行与否 / 详情），用于排查 AI 到底干什么了"""
+    from . import modes
+
+    return {"ok": True, "mode": modes.current(), "items": modes.tail(n)}
 
 
 @app.post("/api/llm/draft")
